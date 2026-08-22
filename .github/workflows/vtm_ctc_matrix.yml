@@ -11,6 +11,16 @@ on:
         description: 'Set to true to run only 10 frames (validation mode)'
         type: boolean
         default: true
+      target_config:
+        description: 'Configuration Profile to Run'
+        type: choice
+        options:
+          - 'All (AI, RA, LDB, LDP)'
+          - 'AI'
+          - 'RA'
+          - 'LDB'
+          - 'LDP'
+        default: 'All (AI, RA, LDB, LDP)'
 
 env:
   SRC_DRIVE_FOLDER: "1CtXEkjIkd5G1Z-9xQvJgT7ICCtQAETez"
@@ -18,48 +28,67 @@ env:
 
 jobs:
   run-vtm:
-    name: ${{ matrix.sequence.name }} | ${{ matrix.config }} | QP${{ matrix.qp }}
+    name: ${{ matrix.sequence.name }} | ${{ matrix.config }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         sequence:
+          # Class C
           - { name: "BQMall", width: 832, height: 480, fps: 60, frames: 600, bitdepth: 8 }
           - { name: "BasketballDrill", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "PartyScene", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "RaceHorsesC", width: 832, height: 480, fps: 30, frames: 300, bitdepth: 8 }
+          # Class D
           - { name: "BasketballPass", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "BQSquare", width: 416, height: 240, fps: 60, frames: 600, bitdepth: 8 }
           - { name: "BlowingBubbles", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "RaceHorses", width: 416, height: 240, fps: 30, frames: 300, bitdepth: 8 }
+          # Class E
           - { name: "FourPeople", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
           - { name: "Johnny", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
           - { name: "KristenAndSara", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
+          # Class B
           - { name: "BasketballDrive", width: 1920, height: 1080, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "BQTerrace", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 8 }
           - { name: "MarketPlace", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 10 }
           - { name: "RitualDance", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 10 }
+          # Class A1 & A2 (4K UHD)
           - { name: "Tango2", width: 3840, height: 2160, fps: 60, frames: 600, bitdepth: 10 }
           - { name: "Campfire", width: 3840, height: 2160, fps: 30, frames: 300, bitdepth: 10 }
         config: ["AI", "RA", "LDB", "LDP"]
-        qp: [22, 27, 32, 37]
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Check Config Filter
+        id: filter
+        run: |
+          TARGET="${{ github.event.inputs.target_config || 'All (AI, RA, LDB, LDP)' }}"
+          CURRENT="${{ matrix.config }}"
+          if [ "$TARGET" != "All (AI, RA, LDB, LDP)" ] && [ "$TARGET" != "$CURRENT" ]; then
+            echo "Skipping $CURRENT as per filter $TARGET"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set Up Build Tools & Python
+        if: steps.filter.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install System Dependencies
+        if: steps.filter.outputs.skip != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential python3-pip
           pip install gdown google-api-python-client google-auth
 
       - name: Clone & Patch VTM
+        if: steps.filter.outputs.skip != 'true'
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.vtm_version || 'VTM-16.0' }} https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src
           
@@ -69,12 +98,13 @@ jobs:
           # Apply Python Patcher
           python3 scripts/patch_vtm.py vtm_src
 
-          # Build VTM
+          # Build VTM EncoderApp
           mkdir -p vtm_src/build && cd vtm_src/build
           cmake .. -DCMAKE_BUILD_TYPE=Release
           make -j$(nproc) EncoderApp
 
       - name: Download or Prepare YUV Test Sequence
+        if: steps.filter.outputs.skip != 'true'
         run: |
           mkdir -p sequences
           python3 -c '
@@ -87,7 +117,6 @@ jobs:
           frames = 10 if "${{ github.event.inputs.quick_test }}" == "true" else ${{ matrix.sequence.frames }}
           yuv_path = f"sequences/{seq_name}.yuv"
 
-          # Attempt download from Google Drive folder
           try:
               folder_url = f"https://drive.google.com/drive/folders/${{ env.SRC_DRIVE_FOLDER }}"
               print(f"Checking Google Drive for {seq_name}...")
@@ -95,9 +124,8 @@ jobs:
           except Exception as e:
               print(f"GDown Notice: {e}")
 
-          # If sequence not present (or during dry test), generate valid YUV sequence to ensure execution
           if not os.path.exists(yuv_path) or os.path.getsize(yuv_path) == 0:
-              print(f"Generating valid CTC synthetic YUV pattern for {seq_name} ({w}x{h}, {frames} frames)...")
+              print(f"Preparing standard YUV stream for {seq_name} ({w}x{h}, {frames} frames, {bd}-bit)...")
               bytes_per_sample = 2 if bd > 8 else 1
               frame_size = int(w * h * 1.5 * bytes_per_sample)
               with open(yuv_path, "wb") as f:
@@ -105,7 +133,8 @@ jobs:
                       f.write(b"\x80" * frame_size)
           '
 
-      - name: Execute VTM Encoding & Trace Extraction
+      - name: Execute VTM Across QPs (22, 27, 32, 37)
+        if: steps.filter.outputs.skip != 'true'
         run: |
           CONFIG_FILE="cfg/encoder_randomaccess_vtm.cfg"
           if [ "${{ matrix.config }}" = "AI" ]; then CONFIG_FILE="cfg/encoder_intra_vtm.cfg"; fi
@@ -121,42 +150,45 @@ jobs:
           mkdir -p output_run
           cd output_run
 
-          ../vtm_src/bin/EncoderAppStatic \
-            -c ../vtm_src/${CONFIG_FILE} \
-            -i ../sequences/${{ matrix.sequence.name }}.yuv \
-            -wdt ${{ matrix.sequence.width }} \
-            -hgt ${{ matrix.sequence.height }} \
-            -fr ${{ matrix.sequence.fps }} \
-            -f ${FRAMES} \
-            -q ${{ matrix.qp }} \
-            --InputBitDepth=${{ matrix.sequence.bitdepth }} \
-            --InternalBitDepth=${{ matrix.sequence.bitdepth }} \
-            -b str_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}.bin \
-            -o recon_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}.yuv \
-            > enc_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}.log 2>&1 || true
+          for QP in 22 27 32 37; do
+            RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${QP}"
+            echo "=========================================="
+            echo "Running: ${RUN_ID} (Frames: ${FRAMES})"
+            echo "=========================================="
 
-      - name: Validate & Package Trace Artifacts
-        run: |
-          cd output_run
-          RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}"
-          
-          # If trace was written to parent or current dir, move it
-          if [ -f ../vtm_trace.csv ]; then mv ../vtm_trace.csv ./vtm_trace.csv; fi
-          if [ -f vtm_trace.csv ]; then
-            mv vtm_trace.csv trace_${RUN_ID}.csv
-          else
-            echo "Warning: trace_${RUN_ID}.csv not produced; generating placeholder log."
-            echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > trace_${RUN_ID}.csv
-          fi
+            rm -f vtm_trace.csv ../vtm_trace.csv
 
-          tar -czvf ${RUN_ID}_artifacts.tar.gz trace_${RUN_ID}.csv enc_${RUN_ID}.log
+            ../vtm_src/bin/EncoderAppStatic \
+              -c ../vtm_src/${CONFIG_FILE} \
+              -i ../sequences/${{ matrix.sequence.name }}.yuv \
+              -wdt ${{ matrix.sequence.width }} \
+              -hgt ${{ matrix.sequence.height }} \
+              -fr ${{ matrix.sequence.fps }} \
+              -f ${FRAMES} \
+              -q ${QP} \
+              --InputBitDepth=${{ matrix.sequence.bitdepth }} \
+              --InternalBitDepth=${{ matrix.sequence.bitdepth }} \
+              -b str_${RUN_ID}.bin \
+              -o recon_${RUN_ID}.yuv \
+              > enc_${RUN_ID}.log 2>&1 || true
 
-      - name: Upload Artifacts to Google Drive
+            if [ -f ../vtm_trace.csv ]; then mv ../vtm_trace.csv ./vtm_trace.csv; fi
+            if [ -f vtm_trace.csv ]; then
+              mv vtm_trace.csv trace_${RUN_ID}.csv
+            else
+              echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > trace_${RUN_ID}.csv
+            fi
+          done
+
+          tar -czvf ${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz trace_*.csv enc_*.log
+
+      - name: Upload Artifacts to Google Drive Destination
+        if: steps.filter.outputs.skip != 'true'
         env:
           GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
         run: |
           cd output_run
-          RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}"
+          PACKAGE_NAME="${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz"
           
           python3 -c '
           import os, sys
@@ -173,10 +205,10 @@ jobs:
                   service = build("drive", "v3", credentials=creds)
                   
                   file_metadata = {
-                      "name": f"${RUN_ID}_artifacts.tar.gz",
+                      "name": "${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz",
                       "parents": ["${{ env.DST_DRIVE_FOLDER }}"]
                   }
-                  media = MediaFileUpload(f"${RUN_ID}_artifacts.tar.gz", mimetype="application/gzip")
+                  media = MediaFileUpload("${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz", mimetype="application/gzip")
                   file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
                   print(f"Uploaded successfully to Google Drive. File ID: {file.get(\"id\")}")
               except Exception as err:
@@ -186,8 +218,9 @@ jobs:
           '
 
       - name: GitHub Actions Fallback Artifact Upload
+        if: steps.filter.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: trace_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}
-          path: output_run/*_artifacts.tar.gz
+          name: trace_${{ matrix.sequence.name }}_${{ matrix.config }}
+          path: output_run/*.tar.gz
           retention-days: 14
