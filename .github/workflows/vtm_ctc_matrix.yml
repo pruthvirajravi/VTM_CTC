@@ -29,7 +29,7 @@ env:
 jobs:
   run-vtm:
     name: ${{ matrix.sequence.name }} | ${{ matrix.config }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -84,11 +84,14 @@ jobs:
         if: steps.filter.outputs.skip != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential python3-pip
+          sudo apt-get install -y cmake build-essential gcc-11 g++-11 python3-pip
           pip install gdown google-api-python-client google-auth
 
       - name: Clone & Patch VTM
         if: steps.filter.outputs.skip != 'true'
+        env:
+          CC: gcc-11
+          CXX: g++-11
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.vtm_version || 'VTM-16.0' }} https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src
           
@@ -98,9 +101,9 @@ jobs:
           # Apply Python Patcher
           python3 scripts/patch_vtm.py vtm_src
 
-          # Build VTM EncoderApp with -Wno-error for modern GCC compatibility
+          # Build VTM EncoderApp
           mkdir -p vtm_src/build && cd vtm_src/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-w -Wno-error"
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-11 -DCMAKE_C_COMPILER=gcc-11
           make -j$(nproc) EncoderApp
 
       - name: Download or Prepare YUV Test Sequence
