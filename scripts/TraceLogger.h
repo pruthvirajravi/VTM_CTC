@@ -3,6 +3,8 @@
 #include <mutex>
 #include <string>
 #include <cstdint>
+#include <cstdlib>
+#include <iostream>
 
 class VtmTraceLogger {
 private:
@@ -18,13 +20,24 @@ public:
         return instance;
     }
 
-    void init(const std::string& filename = "vtm_trace.csv") {
+    void init(const std::string& filename = "") {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_traceFile.is_open()) {
-            m_traceFile.open(filename, std::ios::out);
-            m_traceFile << "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,"
-                        << "tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,"
-                        << "direction,stage,cbf,bit_depth,tree_type,pred_mode\n";
+            std::string outPath = filename;
+            if (outPath.empty()) {
+                const char* envPath = std::getenv("VTM_TRACE_FILE");
+                outPath = (envPath && envPath[0] != '\0') ? std::string(envPath) : "vtm_trace.csv";
+            }
+            m_traceFile.open(outPath, std::ios::out | std::ios::app);
+            if (m_traceFile.is_open()) {
+                m_traceFile.seekp(0, std::ios::end);
+                if (m_traceFile.tellp() == 0) {
+                    m_traceFile << "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,"
+                                << "tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,"
+                                << "direction,stage,cbf,bit_depth,tree_type,pred_mode\n";
+                }
+                m_traceFile.flush();
+            }
         }
     }
 
@@ -37,25 +50,39 @@ public:
              const std::string& predMode) {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_traceFile.is_open()) {
-            init();
+            const char* envPath = std::getenv("VTM_TRACE_FILE");
+            std::string outPath = (envPath && envPath[0] != '\0') ? std::string(envPath) : "vtm_trace.csv";
+            m_traceFile.open(outPath, std::ios::out | std::ios::app);
+            if (m_traceFile.is_open()) {
+                m_traceFile.seekp(0, std::ios::end);
+                if (m_traceFile.tellp() == 0) {
+                    m_traceFile << "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,"
+                                << "tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,"
+                                << "direction,stage,cbf,bit_depth,tree_type,pred_mode\n";
+                }
+            }
         }
-        m_traceFile << m_taskId++ << ","
-                    << poc << ","
-                    << sliceType << ","
-                    << ctuAddr << ","
-                    << tuX << "," << tuY << ","
-                    << (int)tuW << "," << (int)tuH << ","
-                    << (int)trEffW << "," << (int)trEffH << ","
-                    << comp << ","
-                    << trHor << "," << trVer << ","
-                    << dir << "," << stage << ","
-                    << (int)cbf << "," << (int)bitDepth << ","
-                    << treeType << "," << predMode << "\n";
+        if (m_traceFile.is_open()) {
+            m_traceFile << m_taskId++ << ","
+                        << poc << ","
+                        << sliceType << ","
+                        << ctuAddr << ","
+                        << tuX << "," << tuY << ","
+                        << (int)tuW << "," << (int)tuH << ","
+                        << (int)trEffW << "," << (int)trEffH << ","
+                        << comp << ","
+                        << trHor << "," << trVer << ","
+                        << dir << "," << stage << ","
+                        << (int)cbf << "," << (int)bitDepth << ","
+                        << treeType << "," << predMode << "\n";
+            m_traceFile.flush();
+        }
     }
 
     void close() {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_traceFile.is_open()) {
+            m_traceFile.flush();
             m_traceFile.close();
         }
     }

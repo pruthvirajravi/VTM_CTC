@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Python script to:
-1. Safely remove -Werror / warnings-as-errors from VTM CMake and build scripts.
+1. Safely remove -Werror / warnings-as-errors from VTM build scripts.
 2. Inject 100% self-contained, thread-safe trace extraction hooks into VTM TrQuant.cpp.
 """
 
@@ -43,7 +43,7 @@ def patch_trquant_cpp(vtm_root):
     new_lines = ['#include "TraceLogger.h"\n']
 
     inv_hook = """
-  // Trace Logger Hook - Inverse (Self-Contained)
+  // Trace Logger Hook - Inverse
   {
     const CompArea &area_hook = tu.blocks[compID];
     const CodingStructure &cs_hook = *tu.cs;
@@ -67,7 +67,7 @@ def patch_trquant_cpp(vtm_root):
 """
 
     fwd_hook = """
-  // Trace Logger Hook - Forward (Self-Contained)
+  // Trace Logger Hook - Forward
   {
     const CompArea &area_hook = tu.blocks[compID];
     const CodingStructure &cs_hook = *tu.cs;
@@ -100,15 +100,14 @@ def patch_trquant_cpp(vtm_root):
         elif in_inv and "{" in line:
             new_lines.append(inv_hook)
             in_inv = False
-            print("Injected self-contained inverse transform hook.")
+            print("Injected inverse transform hook into invTransformNxN.")
 
-        if "void TrQuant::transformNxN( TransformUnit& tu, const ComponentID& compID, const QpParam& cQP, TCoeff& uiAbsSum" in line or \
-           "void TrQuant::transformNxN(TransformUnit &tu, const ComponentID &compID, const QpParam &cQP, TCoeff &uiAbsSum" in line:
+        if "void TrQuant::transformNxN(" in line:
             in_fwd = True
         elif in_fwd and "{" in line:
             new_lines.append(fwd_hook)
             in_fwd = False
-            print("Injected self-contained forward transform hook.")
+            print("Injected forward transform hook into transformNxN.")
 
     with open(trquant_cpp_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)

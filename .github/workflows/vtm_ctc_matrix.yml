@@ -90,8 +90,18 @@ jobs:
       - name: Clone & Patch VTM
         if: steps.filter.outputs.skip != 'true'
         run: |
-          git clone --depth 1 --branch ${{ github.event.inputs.vtm_version || 'VTM-16.0' }} https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src
+          git config --global http.version HTTP/1.1
+          git config --global http.postBuffer 524288000
           
+          # Resilient clone with retry
+          for i in 1 2 3 4; do
+            echo "Cloning VTM (attempt $i)..."
+            if git clone --depth 1 --branch ${{ github.event.inputs.vtm_version || 'VTM-16.0' }} https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src; then
+              break
+            fi
+            sleep 5
+          done
+
           # Copy TraceLogger header
           cp scripts/TraceLogger.h vtm_src/source/Lib/CommonLib/TraceLogger.h
 
@@ -147,7 +157,7 @@ jobs:
             FRAMES=10
           fi
 
-          # Find compiled EncoderApp binary using absolute workspace path
+          # Locate compiled binary
           APP_BIN=$(find "$GITHUB_WORKSPACE/vtm_src" -name "EncoderApp*" -type f -executable | head -n 1)
           if [ -z "$APP_BIN" ] || [ ! -f "$APP_BIN" ]; then
             echo "ERROR: Could not locate compiled EncoderApp executable in $GITHUB_WORKSPACE/vtm_src!"
@@ -165,6 +175,7 @@ jobs:
             echo "Running: ${RUN_ID} (Frames: ${FRAMES})"
             echo "=========================================="
 
+            export VTM_TRACE_FILE="$PWD/vtm_trace.csv"
             rm -f vtm_trace.csv "$GITHUB_WORKSPACE/vtm_trace.csv"
 
             "$APP_BIN" \
