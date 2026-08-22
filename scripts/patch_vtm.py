@@ -1,31 +1,40 @@
 #!/usr/bin/env python3
 """
-Python script to automatically inject trace logging hooks into VTM source code.
-Verified against VTM-16.0/18.0/20.0 TrQuant.cpp.
+Python script to automatically inject trace logging hooks into VTM source code
+and remove hardcoded 'warnings-as-errors' from VTM CMakeLists.txt for modern GCC.
 """
 
 import os
 import sys
 
+def patch_vtm_cmakelists(vtm_root):
+    cmakelists_path = os.path.join(vtm_root, "CMakeLists.txt")
+    if os.path.exists(cmakelists_path):
+        with open(cmakelists_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if "warnings-as-errors" in content:
+            content = content.replace("warnings-as-errors", "")
+            with open(cmakelists_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print("Successfully disabled 'warnings-as-errors' in VTM CMakeLists.txt.")
+
 def patch_vtm_source(vtm_root):
+    patch_vtm_cmakelists(vtm_root)
+
     trquant_cpp_path = os.path.join(vtm_root, "source", "Lib", "CommonLib", "TrQuant.cpp")
-    
     if not os.path.exists(trquant_cpp_path):
         print(f"Error: {trquant_cpp_path} does not exist.")
         sys.exit(1)
 
-    print(f"Patching: {trquant_cpp_path}")
-    
     with open(trquant_cpp_path, "r", encoding="utf-8", errors="ignore") as f:
         lines = f.readlines()
 
-    # Check if already patched
     if any("TraceLogger.h" in line for line in lines):
         print("TrQuant.cpp is already patched.")
         return
 
     new_lines = ['#include "TraceLogger.h"\n']
-    
+
     inv_hook = """
   // Trace Logger Hook - Inverse
   {
@@ -37,8 +46,8 @@ def patch_vtm_source(vtm_root):
     uint8_t tuW = (uint8_t)area.width;
     uint8_t tuH = (uint8_t)area.height;
     std::string compStr = (compID == COMPONENT_Y) ? "Y" : ((compID == COMPONENT_Cb) ? "Cb" : "Cr");
-    std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : "MTS"));
-    std::string trVer = trHor;
+    std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DST7_DCT8 ? "DST7" : "DCT8")));
+    std::string trVer = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DCT8_DST7 ? "DST7" : "DCT8")));
     std::string treeType = (tu.cu->treeType == TREE_D ? "DUAL_TREE_LUMA" : (tu.cu->treeType == TREE_C ? "DUAL_TREE_CHROMA" : "SINGLE_TREE"));
     std::string predMode = (tu.cu->predMode == MODE_INTRA ? "MODE_INTRA" : (tu.cu->predMode == MODE_INTER ? "MODE_INTER" : "MODE_IBC"));
     uint8_t bitDepth = (uint8_t)tu.cs->sps->getBitDepth(toChannelType(compID));
@@ -58,8 +67,8 @@ def patch_vtm_source(vtm_root):
     uint8_t tuW = (uint8_t)rect.width;
     uint8_t tuH = (uint8_t)rect.height;
     std::string compStr = (compID == COMPONENT_Y) ? "Y" : ((compID == COMPONENT_Cb) ? "Cb" : "Cr");
-    std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : "MTS"));
-    std::string trVer = trHor;
+    std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DST7_DCT8 ? "DST7" : "DCT8")));
+    std::string trVer = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DCT8_DST7 ? "DST7" : "DCT8")));
     std::string treeType = (tu.cu->treeType == TREE_D ? "DUAL_TREE_LUMA" : (tu.cu->treeType == TREE_C ? "DUAL_TREE_CHROMA" : "SINGLE_TREE"));
     std::string predMode = (tu.cu->predMode == MODE_INTRA ? "MODE_INTRA" : (tu.cu->predMode == MODE_INTER ? "MODE_INTER" : "MODE_IBC"));
     uint8_t bitDepth = (uint8_t)sps.getBitDepth(toChannelType(compID));
@@ -70,7 +79,7 @@ def patch_vtm_source(vtm_root):
 
     in_inv = False
     in_fwd = False
-    
+
     for line in lines:
         new_lines.append(line)
         if "void TrQuant::invTransformNxN(" in line:
@@ -79,7 +88,7 @@ def patch_vtm_source(vtm_root):
             new_lines.append(inv_hook)
             in_inv = False
             print("Injected inverse transform hook.")
-            
+
         if "void TrQuant::transformNxN( TransformUnit& tu, const ComponentID& compID, const QpParam& cQP, TCoeff& uiAbsSum" in line or \
            "void TrQuant::transformNxN(TransformUnit &tu, const ComponentID &compID, const QpParam &cQP, TCoeff &uiAbsSum" in line:
             in_fwd = True
@@ -91,7 +100,7 @@ def patch_vtm_source(vtm_root):
     with open(trquant_cpp_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
-    print("VTM patch successfully written.")
+    print("VTM patch complete!")
 
 if __name__ == "__main__":
     vtm_dir = sys.argv[1] if len(sys.argv) > 1 else "vtm_src"
