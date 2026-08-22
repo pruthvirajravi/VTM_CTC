@@ -8,7 +8,7 @@ on:
         required: true
         default: 'VTM-16.0'
       quick_test:
-        description: 'Run only 10 frames (leave UNCHECKED for Full 10s CTC)'
+        description: 'Run 10-frame quick validation (leave UNCHECKED for standard CTC runs)'
         type: boolean
         default: false
       target_config:
@@ -30,32 +30,33 @@ jobs:
   run-vtm:
     name: ${{ matrix.sequence.name }} | ${{ matrix.config }}
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
         sequence:
-          # Class C
+          # Class C (WVGA 832x480) - Full 10s CTC
           - { name: "BQMall", width: 832, height: 480, fps: 60, frames: 600, bitdepth: 8 }
           - { name: "BasketballDrill", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "PartyScene", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "RaceHorsesC", width: 832, height: 480, fps: 30, frames: 300, bitdepth: 8 }
-          # Class D
+          # Class D (WQVGA 416x240) - Full 10s CTC
           - { name: "BasketballPass", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "BQSquare", width: 416, height: 240, fps: 60, frames: 600, bitdepth: 8 }
           - { name: "BlowingBubbles", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
           - { name: "RaceHorses", width: 416, height: 240, fps: 30, frames: 300, bitdepth: 8 }
-          # Class E
-          - { name: "FourPeople", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
-          - { name: "Johnny", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
-          - { name: "KristenAndSara", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
-          # Class B
-          - { name: "BasketballDrive", width: 1920, height: 1080, fps: 50, frames: 500, bitdepth: 8 }
-          - { name: "BQTerrace", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 8 }
-          - { name: "MarketPlace", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 10 }
-          - { name: "RitualDance", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 10 }
-          # Class A1 & A2 (4K UHD)
-          - { name: "Tango2", width: 3840, height: 2160, fps: 60, frames: 600, bitdepth: 10 }
-          - { name: "Campfire", width: 3840, height: 2160, fps: 30, frames: 300, bitdepth: 10 }
+          # Class E (720p 1280x720) - 150-300 frames
+          - { name: "FourPeople", width: 1280, height: 720, fps: 60, frames: 300, bitdepth: 8 }
+          - { name: "Johnny", width: 1280, height: 720, fps: 60, frames: 300, bitdepth: 8 }
+          - { name: "KristenAndSara", width: 1280, height: 720, fps: 60, frames: 300, bitdepth: 8 }
+          # Class B (1080p FHD 1920x1080) - Optimized for 2-core runners (60 frames)
+          - { name: "BasketballDrive", width: 1920, height: 1080, fps: 50, frames: 50, bitdepth: 8 }
+          - { name: "BQTerrace", width: 1920, height: 1080, fps: 60, frames: 60, bitdepth: 8 }
+          - { name: "MarketPlace", width: 1920, height: 1080, fps: 60, frames: 60, bitdepth: 10 }
+          - { name: "RitualDance", width: 1920, height: 1080, fps: 60, frames: 60, bitdepth: 10 }
+          # Class A1 & A2 (4K UHD 3840x2160) - Optimized for 2-core runners (20-30 frames)
+          - { name: "Tango2", width: 3840, height: 2160, fps: 60, frames: 30, bitdepth: 10 }
+          - { name: "Campfire", width: 3840, height: 2160, fps: 30, frames: 20, bitdepth: 10 }
         config: ["AI", "RA", "LDB", "LDP"]
 
     steps:
