@@ -3,6 +3,8 @@
 Python script to:
 1. Safely remove -Werror / warnings-as-errors from VTM build scripts.
 2. Inject Post-RDO final transform extraction hooks into VTM CABACWriter.cpp.
+Guarantees 1-to-1 post-RDO execution stream (filters out CABACEstimator RDO trials),
+verifies exact CBF using coefficient buffers, and models HF zeroing.
 """
 
 import os
@@ -51,7 +53,9 @@ def patch_cabac_writer(vtm_root):
     hook_code = """
   // =========================================================================
   // POST-RDO FINAL WINNING TRANSFORM LOGGING HOOK (1-to-1 Hardware Stream)
+  // Only executed during final bitstream writing (isEncoding() && m_Bitstream)
   // =========================================================================
+  if (isEncoding() && m_Bitstream != nullptr)
   {
     uint32_t poc = cs.slice->getPOC();
     char sliceType = (cs.slice->getSliceType() == I_SLICE) ? 'I' : ((cs.slice->getSliceType() == P_SLICE) ? 'P' : 'B');
@@ -71,7 +75,25 @@ def patch_cabac_writer(vtm_root):
       uint8_t tuW = (uint8_t)area.width;
       uint8_t tuH = (uint8_t)area.height;
       uint8_t bitDepth = (uint8_t)cs.sps->getBitDepth(toChannelType(compID));
+      
+      // Multi-layer verified CBF calculation
       uint8_t cbfVal = (uint8_t)(cbf[compID] ? 1 : 0);
+      if (cbfVal == 0) {
+        cbfVal = (uint8_t)(TU::getCbfAtDepth(tu, compID, partitioner.currTrDepth) ? 1 : 0);
+      }
+      if (cbfVal == 0) {
+        const TCoeff* coeffs = tu.getCoeffs(compID).buf;
+        if (coeffs != nullptr) {
+          int numCoeffs = area.area();
+          for (int ci = 0; ci < numCoeffs; ci++) {
+            if (coeffs[ci] != 0) {
+              cbfVal = 1;
+              break;
+            }
+          }
+        }
+      }
+
       std::string compStr = (compID == COMPONENT_Y) ? "Y" : ((compID == COMPONENT_Cb) ? "Cb" : "Cr");
       
       std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DST7_DCT8 ? "DST7" : "DCT8")));
@@ -86,10 +108,10 @@ def patch_cabac_writer(vtm_root):
       if (trVer == "DCT2") trEffH = std::min((uint8_t)tuH, (uint8_t)32);
       else if (trVer == "DST7" || trVer == "DCT8") trEffH = std::min((uint8_t)tuH, (uint8_t)16);
 
-      // 1. Log Forward Transform
+      // 1. Log Forward Transform (ENC_FWD)
       VtmTraceLogger::getInstance().log(poc, sliceType, ctuAddr, tuX, tuY, tuW, tuH, trEffW, trEffH, compStr, trHor, trVer, "FWD", "ENC_FWD", cbfVal, bitDepth, treeType, predMode);
       
-      // 2. Log Inverse Transform for Reconstruction (if CBF == 1)
+      // 2. Log Inverse Transform for Reconstruction (ENC_RECON) if CBF == 1
       if (cbfVal == 1) {
         VtmTraceLogger::getInstance().log(poc, sliceType, ctuAddr, tuX, tuY, tuW, tuH, trEffW, trEffH, compStr, trHor, trVer, "INV", "ENC_RECON", cbfVal, bitDepth, treeType, predMode);
       }
@@ -97,7 +119,6 @@ def patch_cabac_writer(vtm_root):
   }
 """
 
-    # Inject at end of CABACWriter::transform_unit before DTRACE_COND
     split_target = "DTRACE_COND( ( isEncoding() ), g_trace_ctx, D_DQP"
     pos = content.find(target_signature)
     pos_dtrace = content.find(split_target, pos)
@@ -105,8 +126,6 @@ def patch_cabac_writer(vtm_root):
         content = content[:pos_dtrace] + hook_code + "\n  " + content[pos_dtrace:]
         print("Successfully injected post-RDO logging hook into CABACWriter::transform_unit.")
     else:
-        # Fallback to function end
-        print("Notice: Injecting before closing brace.")
         brace_pos = content.find("void CABACWriter::cu_qp_delta", pos)
         if brace_pos != -1:
             last_brace = content.rfind("}", pos, brace_pos)
