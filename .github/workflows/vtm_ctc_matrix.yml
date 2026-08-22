@@ -8,9 +8,9 @@ on:
         required: true
         default: 'VTM-16.0'
       quick_test:
-        description: 'Set to true to run only 10 frames (validation mode)'
+        description: 'Run only 10 frames (leave UNCHECKED for Full 10s CTC)'
         type: boolean
-        default: true
+        default: false
       target_config:
         description: 'Configuration Profile to Run'
         type: choice
@@ -147,7 +147,6 @@ jobs:
             FRAMES=10
           fi
 
-          # Find compiled EncoderApp binary dynamically across build tree
           APP_BIN=$(find ../vtm_src -name "EncoderApp*" -type f -executable | head -n 1)
           if [ -z "$APP_BIN" ] || [ ! -f "$APP_BIN" ]; then
             echo "ERROR: Could not locate compiled EncoderApp executable in vtm_src!"
