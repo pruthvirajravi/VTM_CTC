@@ -102,10 +102,11 @@ jobs:
             sleep 5
           done
 
-          # Copy TraceLogger header
+          # Copy TraceLogger header to both libraries
           cp scripts/TraceLogger.h vtm_src/source/Lib/CommonLib/TraceLogger.h
+          cp scripts/TraceLogger.h vtm_src/source/Lib/EncoderLib/TraceLogger.h
 
-          # Apply Python Patcher
+          # Apply Post-RDO Python Patcher
           python3 scripts/patch_vtm.py vtm_src
 
           # Build VTM
