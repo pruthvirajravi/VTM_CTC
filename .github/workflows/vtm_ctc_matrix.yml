@@ -98,9 +98,9 @@ jobs:
           # Apply Python Patcher
           python3 scripts/patch_vtm.py vtm_src
 
-          # Build VTM EncoderApp
+          # Build VTM EncoderApp with -Wno-error for modern GCC compatibility
           mkdir -p vtm_src/build && cd vtm_src/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-w -Wno-error"
           make -j$(nproc) EncoderApp
 
       - name: Download or Prepare YUV Test Sequence
