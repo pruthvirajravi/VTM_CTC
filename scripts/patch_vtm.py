@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Python script to:
-1. Strip all -Werror, warnings-as-errors, and compiler warnings from VTM CMake and build scripts.
+1. Safely remove -Werror / warnings-as-errors without breaking CMake multi-line syntax.
 2. Inject thread-safe trace extraction hooks into VTM TrQuant.cpp.
 """
 
@@ -9,27 +9,27 @@ import os
 import sys
 
 def disable_all_warnings_and_errors(vtm_root):
-    # 1. Patch CMakeLists.txt
+    # 1. Patch CMakeLists.txt safely (only remove the string "warnings-as-errors")
     cmakelists_path = os.path.join(vtm_root, "CMakeLists.txt")
     if os.path.exists(cmakelists_path):
         with open(cmakelists_path, "r", encoding="utf-8") as f:
             c = f.read()
         c = c.replace("warnings-as-errors", "")
-        c = c.replace("bb_enable_warnings", "# bb_enable_warnings")
         with open(cmakelists_path, "w", encoding="utf-8") as f:
             f.write(c)
-        print("Patched CMakeLists.txt to disable warnings-as-errors.")
+        print("Patched CMakeLists.txt to remove warnings-as-errors.")
 
-    # 2. Patch BBuildEnv.cmake
+    # 2. Patch BBuildEnv.cmake safely
     bbuildenv_path = os.path.join(vtm_root, "cmake", "CMakeBuild", "cmake", "modules", "BBuildEnv.cmake")
     if os.path.exists(bbuildenv_path):
         with open(bbuildenv_path, "r", encoding="utf-8") as f:
             b = f.read()
+        b = b.replace('list( APPEND _warning_flags "-Werror" )', '# no werror')
         b = b.replace('"-Werror"', '""')
-        b = b.replace("warnings-as-errors", "")
+        b = b.replace('warnings-as-errors', '')
         with open(bbuildenv_path, "w", encoding="utf-8") as f:
             f.write(b)
-        print("Patched BBuildEnv.cmake to remove -Werror.")
+        print("Patched BBuildEnv.cmake to neutralize -Werror.")
 
 def patch_vtm_source(vtm_root):
     disable_all_warnings_and_errors(vtm_root)
