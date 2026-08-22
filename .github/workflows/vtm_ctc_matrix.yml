@@ -147,9 +147,14 @@ jobs:
             FRAMES=10
           fi
 
-          APP_BIN="../vtm_src/bin/EncoderAppStatic"
-          if [ ! -f "$APP_BIN" ]; then APP_BIN="../vtm_src/bin/EncoderApp"; fi
-          echo "Using binary: $APP_BIN"
+          # Find compiled EncoderApp binary dynamically across build tree
+          APP_BIN=$(find ../vtm_src -name "EncoderApp*" -type f -executable | head -n 1)
+          if [ -z "$APP_BIN" ] || [ ! -f "$APP_BIN" ]; then
+            echo "ERROR: Could not locate compiled EncoderApp executable in vtm_src!"
+            find ../vtm_src -type f
+            exit 1
+          fi
+          echo "Discovered VTM EncoderApp at: $APP_BIN"
 
           mkdir -p output_run
           cd output_run
@@ -179,7 +184,10 @@ jobs:
             if [ -f ../vtm_trace.csv ]; then mv ../vtm_trace.csv ./vtm_trace.csv; fi
             if [ -f vtm_trace.csv ]; then
               mv vtm_trace.csv trace_${RUN_ID}.csv
+              ROW_COUNT=$(wc -l < trace_${RUN_ID}.csv)
+              echo "SUCCESS: trace_${RUN_ID}.csv produced ${ROW_COUNT} rows."
             else
+              echo "Warning: trace_${RUN_ID}.csv missing; creating empty header."
               echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > trace_${RUN_ID}.csv
             fi
           done
