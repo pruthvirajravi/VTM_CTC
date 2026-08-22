@@ -89,9 +89,6 @@ jobs:
 
       - name: Clone & Patch VTM
         if: steps.filter.outputs.skip != 'true'
-        env:
-          CC: gcc-11
-          CXX: g++-11
         run: |
           git clone --depth 1 --branch ${{ github.event.inputs.vtm_version || 'VTM-16.0' }} https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src
           
@@ -101,10 +98,10 @@ jobs:
           # Apply Python Patcher
           python3 scripts/patch_vtm.py vtm_src
 
-          # Build VTM EncoderApp
+          # Build VTM
           mkdir -p vtm_src/build && cd vtm_src/build
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-11 -DCMAKE_C_COMPILER=gcc-11
-          make -j$(nproc) EncoderApp
+          make -j$(nproc) || make VERBOSE=1
 
       - name: Download or Prepare YUV Test Sequence
         if: steps.filter.outputs.skip != 'true'
@@ -150,6 +147,11 @@ jobs:
             FRAMES=10
           fi
 
+          # Find compiled binary
+          APP_BIN="../vtm_src/bin/EncoderAppStatic"
+          if [ ! -f "$APP_BIN" ]; then APP_BIN="../vtm_src/bin/EncoderApp"; fi
+          echo "Using binary: $APP_BIN"
+
           mkdir -p output_run
           cd output_run
 
@@ -161,7 +163,7 @@ jobs:
 
             rm -f vtm_trace.csv ../vtm_trace.csv
 
-            ../vtm_src/bin/EncoderAppStatic \
+            $APP_BIN \
               -c ../vtm_src/${CONFIG_FILE} \
               -i ../sequences/${{ matrix.sequence.name }}.yuv \
               -wdt ${{ matrix.sequence.width }} \
