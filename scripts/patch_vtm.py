@@ -1,25 +1,38 @@
 #!/usr/bin/env python3
 """
-Python script to automatically inject trace logging hooks into VTM source code
-and remove hardcoded 'warnings-as-errors' from VTM CMakeLists.txt for modern GCC.
+Python script to:
+1. Strip all -Werror, warnings-as-errors, and compiler warnings from VTM CMake and build scripts.
+2. Inject thread-safe trace extraction hooks into VTM TrQuant.cpp.
 """
 
 import os
 import sys
 
-def patch_vtm_cmakelists(vtm_root):
+def disable_all_warnings_and_errors(vtm_root):
+    # 1. Patch CMakeLists.txt
     cmakelists_path = os.path.join(vtm_root, "CMakeLists.txt")
     if os.path.exists(cmakelists_path):
         with open(cmakelists_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        if "warnings-as-errors" in content:
-            content = content.replace("warnings-as-errors", "")
-            with open(cmakelists_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print("Successfully disabled 'warnings-as-errors' in VTM CMakeLists.txt.")
+            c = f.read()
+        c = c.replace("warnings-as-errors", "")
+        c = c.replace("bb_enable_warnings", "# bb_enable_warnings")
+        with open(cmakelists_path, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("Patched CMakeLists.txt to disable warnings-as-errors.")
+
+    # 2. Patch BBuildEnv.cmake
+    bbuildenv_path = os.path.join(vtm_root, "cmake", "CMakeBuild", "cmake", "modules", "BBuildEnv.cmake")
+    if os.path.exists(bbuildenv_path):
+        with open(bbuildenv_path, "r", encoding="utf-8") as f:
+            b = f.read()
+        b = b.replace('"-Werror"', '""')
+        b = b.replace("warnings-as-errors", "")
+        with open(bbuildenv_path, "w", encoding="utf-8") as f:
+            f.write(b)
+        print("Patched BBuildEnv.cmake to remove -Werror.")
 
 def patch_vtm_source(vtm_root):
-    patch_vtm_cmakelists(vtm_root)
+    disable_all_warnings_and_errors(vtm_root)
 
     trquant_cpp_path = os.path.join(vtm_root, "source", "Lib", "CommonLib", "TrQuant.cpp")
     if not os.path.exists(trquant_cpp_path):
