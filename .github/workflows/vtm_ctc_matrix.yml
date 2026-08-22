@@ -147,7 +147,6 @@ jobs:
             FRAMES=10
           fi
 
-          # Find compiled binary
           APP_BIN="../vtm_src/bin/EncoderAppStatic"
           if [ ! -f "$APP_BIN" ]; then APP_BIN="../vtm_src/bin/EncoderApp"; fi
           echo "Using binary: $APP_BIN"
@@ -194,33 +193,7 @@ jobs:
         run: |
           cd output_run
           PACKAGE_NAME="${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz"
-          
-          python3 -c '
-          import os, sys
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-          from google.oauth2 import service_account
-
-          key_json = os.environ.get("GDRIVE_CREDENTIALS")
-          if key_json:
-              try:
-                  with open("sa_key.json", "w") as f:
-                      f.write(key_json)
-                  creds = service_account.Credentials.from_service_account_file("sa_key.json")
-                  service = build("drive", "v3", credentials=creds)
-                  
-                  file_metadata = {
-                      "name": "${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz",
-                      "parents": ["${{ env.DST_DRIVE_FOLDER }}"]
-                  }
-                  media = MediaFileUpload("${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz", mimetype="application/gzip")
-                  file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-                  print(f"Uploaded successfully to Google Drive. File ID: {file.get(\"id\")}")
-              except Exception as err:
-                  print(f"Google Drive Upload Error: {err}")
-          else:
-              print("Notice: GDRIVE_CREDENTIALS secret not set. Artifacts stored in GitHub.")
-          '
+          python3 ../scripts/upload_to_gdrive.py "$PACKAGE_NAME" "${{ env.DST_DRIVE_FOLDER }}"
 
       - name: GitHub Actions Fallback Artifact Upload
         if: steps.filter.outputs.skip != 'true'
