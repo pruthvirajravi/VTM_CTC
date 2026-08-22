@@ -1,0 +1,165 @@
+name: VTM CTC Parallel Matrix Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      vtm_version:
+        description: 'VTM Git Tag or Branch (e.g. VTM-16.0)'
+        required: true
+        default: 'VTM-16.0'
+      quick_test:
+        description: 'Set to true to run only 10 frames (validation mode)'
+        type: boolean
+        default: false
+
+env:
+  SRC_DRIVE_FOLDER: "1CtXEkjIkd5G1Z-9xQvJgT7ICCtQAETez"
+  DST_DRIVE_FOLDER: "1B2TMPqlOLl1HkA7jfRgcOv4cjgtVOO6e"
+
+jobs:
+  run-vtm:
+    name: ${{ matrix.sequence.name }} | ${{ matrix.config }} | QP${{ matrix.qp }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sequence:
+          - { name: "BQMall", width: 832, height: 480, fps: 60, frames: 600, bitdepth: 8 }
+          - { name: "BasketballDrill", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
+          - { name: "PartyScene", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
+          - { name: "RaceHorsesC", width: 832, height: 480, fps: 30, frames: 300, bitdepth: 8 }
+          - { name: "BasketballPass", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
+          - { name: "BQSquare", width: 416, height: 240, fps: 60, frames: 600, bitdepth: 8 }
+          - { name: "BlowingBubbles", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
+          - { name: "RaceHorses", width: 416, height: 240, fps: 30, frames: 300, bitdepth: 8 }
+          - { name: "FourPeople", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
+          - { name: "Johnny", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
+          - { name: "KristenAndSara", width: 1280, height: 720, fps: 60, frames: 600, bitdepth: 8 }
+          - { name: "BasketballDrive", width: 1920, height: 1080, fps: 50, frames: 500, bitdepth: 8 }
+          - { name: "BQTerrace", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 8 }
+          - { name: "MarketPlace", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 10 }
+          - { name: "RitualDance", width: 1920, height: 1080, fps: 60, frames: 600, bitdepth: 10 }
+          - { name: "Tango2", width: 3840, height: 2160, fps: 60, frames: 600, bitdepth: 10 }
+          - { name: "Campfire", width: 3840, height: 2160, fps: 30, frames: 300, bitdepth: 10 }
+        config: ["AI", "RA", "LDB", "LDP"]
+        qp: [22, 27, 32, 37]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Build Tools & Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential gdown rclone
+
+      - name: Download YUV Test Sequence from Google Drive
+        run: |
+          mkdir -p sequences
+          echo "Downloading ${{ matrix.sequence.name }}.yuv from Google Drive..."
+          python3 -c '
+          import gdown, os
+          seq_name = "${{ matrix.sequence.name }}"
+          folder_id = "${{ env.SRC_DRIVE_FOLDER }}"
+          url = f"https://drive.google.com/drive/folders/{folder_id}"
+          gdown.download_folder(url, output="sequences", quiet=False, use_cookies=False)
+          '
+
+      - name: Clone & Patch VTM
+        run: |
+          git clone https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src
+          cd vtm_src
+          git checkout ${{ github.event.inputs.vtm_version || 'VTM-16.0' }}
+          
+          # Copy TraceLogger header
+          cp ../scripts/TraceLogger.h source/Lib/CommonLib/TraceLogger.h
+
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Execute VTM Encoding & Trace Extraction
+        run: |
+          CONFIG_FILE="cfg/encoder_randomaccess_vtm.cfg"
+          if [ "${{ matrix.config }}" = "AI" ]; then CONFIG_FILE="cfg/encoder_intra_vtm.cfg"; fi
+          if [ "${{ matrix.config }}" = "RA" ]; then CONFIG_FILE="cfg/encoder_randomaccess_vtm.cfg"; fi
+          if [ "${{ matrix.config }}" = "LDB" ]; then CONFIG_FILE="cfg/encoder_lowdelay_vtm.cfg"; fi
+          if [ "${{ matrix.config }}" = "LDP" ]; then CONFIG_FILE="cfg/encoder_lowdelay_P_vtm.cfg"; fi
+
+          FRAMES=${{ matrix.sequence.frames }}
+          if [ "${{ github.event.inputs.quick_test }}" = "true" ]; then
+            FRAMES=10
+          fi
+
+          mkdir -p output_run
+          cd output_run
+
+          ../vtm_src/bin/EncoderAppStatic \
+            -c ../vtm_src/${CONFIG_FILE} \
+            -i ../sequences/${{ matrix.sequence.name }}.yuv \
+            -wdt ${{ matrix.sequence.width }} \
+            -hgt ${{ matrix.sequence.height }} \
+            -fr ${{ matrix.sequence.fps }} \
+            -f ${FRAMES} \
+            -q ${{ matrix.qp }} \
+            --InputBitDepth=${{ matrix.sequence.bitdepth }} \
+            --InternalBitDepth=${{ matrix.sequence.bitdepth }} \
+            -b str_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}.bin \
+            -o recon_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}.yuv \
+            > enc_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}.log
+
+      - name: Validate & Compress Trace Artifacts
+        run: |
+          cd output_run
+          RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}"
+          
+          if [ ! -s vtm_trace.csv ]; then
+            echo "ERROR: vtm_trace.csv is empty or missing!"
+            exit 1
+          fi
+
+          mv vtm_trace.csv trace_${RUN_ID}.csv
+          tar -czvf ${RUN_ID}_artifacts.tar.gz trace_${RUN_ID}.csv enc_${RUN_ID}.log
+
+      - name: Upload Artifacts to Google Drive Destination
+        env:
+          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          cd output_run
+          RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}"
+          
+          python3 -c '
+          import os, sys
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          from google.oauth2 import service_account
+
+          key_json = os.environ.get("GDRIVE_CREDENTIALS")
+          if key_json:
+              with open("sa_key.json", "w") as f:
+                  f.write(key_json)
+              creds = service_account.Credentials.from_service_account_file("sa_key.json")
+              service = build("drive", "v3", credentials=creds)
+              
+              file_metadata = {
+                  "name": f"${RUN_ID}_artifacts.tar.gz",
+                  "parents": ["${{ env.DST_DRIVE_FOLDER }}"]
+              }
+              media = MediaFileUpload(f"${RUN_ID}_artifacts.tar.gz", mimetype="application/gzip")
+              file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+              print(f"Uploaded successfully to Google Drive. File ID: {file.get(\"id\")}")
+          else:
+              print("Notice: GDRIVE_CREDENTIALS secret not set. Storing as GitHub Artifact.")
+          '
+
+      - name: GitHub Actions Fallback Artifact Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}
+          path: output_run/*_artifacts.tar.gz
+          retention-days: 14
