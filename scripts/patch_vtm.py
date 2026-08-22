@@ -4,7 +4,7 @@ Python script to:
 1. Safely remove -Werror / warnings-as-errors from VTM build scripts.
 2. Inject Post-RDO final transform extraction hooks into VTM CABACWriter.cpp.
 Guarantees 1-to-1 post-RDO execution stream (filters out CABACEstimator RDO trials),
-verifies exact CBF using coefficient buffers, and models HF zeroing.
+verifies exact CBF using 2D stride-aware CoeffBuf::at(x, y) scanning, and models HF zeroing.
 """
 
 import os
@@ -76,24 +76,23 @@ def patch_cabac_writer(vtm_root):
       uint8_t tuH = (uint8_t)area.height;
       uint8_t bitDepth = (uint8_t)cs.sps->getBitDepth(toChannelType(compID));
       
-      // Multi-layer verified CBF calculation
-      uint8_t cbfVal = (uint8_t)(cbf[compID] ? 1 : 0);
-      if (cbfVal == 0) {
-        cbfVal = (uint8_t)(TU::getCbfAtDepth(tu, compID, partitioner.currTrDepth) ? 1 : 0);
-      }
-      if (cbfVal == 0) {
-        const TCoeff* coeffs = tu.getCoeffs(compID).buf;
-        if (coeffs != nullptr) {
-          int numCoeffs = area.area();
-          for (int ci = 0; ci < numCoeffs; ci++) {
-            if (coeffs[ci] != 0) {
-              cbfVal = 1;
-              break;
-            }
+      // Exact 2D Stride-Aware Non-Zero Coefficient Scan
+      bool hasNonZeroCoeffs = false;
+      const CCoeffBuf &cb = tu.getCoeffs(compID);
+      for (unsigned cy = 0; cy < cb.height; cy++)
+      {
+        for (unsigned cx = 0; cx < cb.width; cx++)
+        {
+          if (cb.at(cx, cy) != 0)
+          {
+            hasNonZeroCoeffs = true;
+            break;
           }
         }
+        if (hasNonZeroCoeffs) break;
       }
 
+      uint8_t cbfVal = (hasNonZeroCoeffs || TU::getCbf(tu, compID) || cbf[compID]) ? 1 : 0;
       std::string compStr = (compID == COMPONENT_Y) ? "Y" : ((compID == COMPONENT_Cb) ? "Cb" : "Cr");
       
       std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DST7_DCT8 ? "DST7" : "DCT8")));
