@@ -143,14 +143,15 @@ jobs:
           if [ "${{ matrix.config }}" = "LDP" ]; then CONFIG_FILE="cfg/encoder_lowdelay_P_vtm.cfg"; fi
 
           FRAMES=${{ matrix.sequence.frames }}
-          if [ "${{ github.event.inputs.quick_test }}" = "true" ]; then
+          if [ "${{ github.event.inputs.quick_test }}" == "true" ]; then
             FRAMES=10
           fi
 
-          APP_BIN=$(find ../vtm_src -name "EncoderApp*" -type f -executable | head -n 1)
+          # Find compiled EncoderApp binary using absolute workspace path
+          APP_BIN=$(find "$GITHUB_WORKSPACE/vtm_src" -name "EncoderApp*" -type f -executable | head -n 1)
           if [ -z "$APP_BIN" ] || [ ! -f "$APP_BIN" ]; then
-            echo "ERROR: Could not locate compiled EncoderApp executable in vtm_src!"
-            find ../vtm_src -type f
+            echo "ERROR: Could not locate compiled EncoderApp executable in $GITHUB_WORKSPACE/vtm_src!"
+            find "$GITHUB_WORKSPACE/vtm_src" -type f
             exit 1
           fi
           echo "Discovered VTM EncoderApp at: $APP_BIN"
@@ -164,11 +165,11 @@ jobs:
             echo "Running: ${RUN_ID} (Frames: ${FRAMES})"
             echo "=========================================="
 
-            rm -f vtm_trace.csv ../vtm_trace.csv
+            rm -f vtm_trace.csv "$GITHUB_WORKSPACE/vtm_trace.csv"
 
-            $APP_BIN \
-              -c ../vtm_src/${CONFIG_FILE} \
-              -i ../sequences/${{ matrix.sequence.name }}.yuv \
+            "$APP_BIN" \
+              -c "$GITHUB_WORKSPACE/vtm_src/${CONFIG_FILE}" \
+              -i "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" \
               -wdt ${{ matrix.sequence.width }} \
               -hgt ${{ matrix.sequence.height }} \
               -fr ${{ matrix.sequence.fps }} \
@@ -176,22 +177,22 @@ jobs:
               -q ${QP} \
               --InputBitDepth=${{ matrix.sequence.bitdepth }} \
               --InternalBitDepth=${{ matrix.sequence.bitdepth }} \
-              -b str_${RUN_ID}.bin \
-              -o recon_${RUN_ID}.yuv \
-              > enc_${RUN_ID}.log 2>&1 || true
+              -b "str_${RUN_ID}.bin" \
+              -o "recon_${RUN_ID}.yuv" \
+              > "enc_${RUN_ID}.log" 2>&1 || true
 
-            if [ -f ../vtm_trace.csv ]; then mv ../vtm_trace.csv ./vtm_trace.csv; fi
+            if [ -f "$GITHUB_WORKSPACE/vtm_trace.csv" ]; then mv "$GITHUB_WORKSPACE/vtm_trace.csv" ./vtm_trace.csv; fi
             if [ -f vtm_trace.csv ]; then
-              mv vtm_trace.csv trace_${RUN_ID}.csv
-              ROW_COUNT=$(wc -l < trace_${RUN_ID}.csv)
+              mv vtm_trace.csv "trace_${RUN_ID}.csv"
+              ROW_COUNT=$(wc -l < "trace_${RUN_ID}.csv")
               echo "SUCCESS: trace_${RUN_ID}.csv produced ${ROW_COUNT} rows."
             else
-              echo "Warning: trace_${RUN_ID}.csv missing; creating empty header."
-              echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > trace_${RUN_ID}.csv
+              echo "Warning: trace_${RUN_ID}.csv missing; creating fallback header."
+              echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > "trace_${RUN_ID}.csv"
             fi
           done
 
-          tar -czvf ${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz trace_*.csv enc_*.log
+          tar -czvf "${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz" trace_*.csv enc_*.log
 
       - name: Upload Artifacts to Google Drive Destination
         if: steps.filter.outputs.skip != 'true'
@@ -200,7 +201,7 @@ jobs:
         run: |
           cd output_run
           PACKAGE_NAME="${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz"
-          python3 ../scripts/upload_to_gdrive.py "$PACKAGE_NAME" "${{ env.DST_DRIVE_FOLDER }}"
+          python3 "$GITHUB_WORKSPACE/scripts/upload_to_gdrive.py" "$PACKAGE_NAME" "${{ env.DST_DRIVE_FOLDER }}"
 
       - name: GitHub Actions Fallback Artifact Upload
         if: steps.filter.outputs.skip != 'true'
