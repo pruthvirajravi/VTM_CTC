@@ -1,0 +1,227 @@
+name: VTM Heavy CTC (4K & 1080p Distributed Matrix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      vtm_version:
+        description: 'VTM Git Tag or Branch'
+        required: true
+        default: 'VTM-16.0'
+      target_sequence:
+        description: 'Target Sequence (or All Heavy)'
+        type: choice
+        options:
+          - 'All Heavy (Tango2, Campfire, MarketPlace, RitualDance)'
+          - 'Tango2'
+          - 'Campfire'
+          - 'MarketPlace'
+          - 'RitualDance'
+        default: 'All Heavy (Tango2, Campfire, MarketPlace, RitualDance)'
+      frames_override:
+        description: 'Frames per run (e.g. 50 for quick full, 300 for full CTC)'
+        required: true
+        default: '60'
+
+env:
+  SRC_DRIVE_FOLDER: "1CtXEkjIkd5G1Z-9xQvJgT7ICCtQAETez"
+  DST_DRIVE_FOLDER: "1B2TMPqlOLl1HkA7jfRgcOv4cjgtVOO6e"
+
+jobs:
+  run-heavy-vtm:
+    name: ${{ matrix.sequence.name }} | ${{ matrix.config }} | QP${{ matrix.qp }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        sequence:
+          # Class A1 (4K UHD 3840x2160)
+          - { name: "Tango2", width: 3840, height: 2160, fps: 60, bitdepth: 10 }
+          # Class A2 (4K UHD 3840x2160)
+          - { name: "Campfire", width: 3840, height: 2160, fps: 30, bitdepth: 10 }
+          # Class B (1080p FHD 1920x1080 10-bit)
+          - { name: "MarketPlace", width: 1920, height: 1080, fps: 60, bitdepth: 10 }
+          - { name: "RitualDance", width: 1920, height: 1080, fps: 60, bitdepth: 10 }
+        config: ["AI", "RA", "LDB", "LDP"]
+        qp: [22, 27, 32, 37]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check Sequence Filter
+        id: filter
+        run: |
+          TARGET="${{ github.event.inputs.target_sequence || 'All Heavy (Tango2, Campfire, MarketPlace, RitualDance)' }}"
+          CURRENT="${{ matrix.sequence.name }}"
+          if [ "$TARGET" != "All Heavy (Tango2, Campfire, MarketPlace, RitualDance)" ] && [ "$TARGET" != "$CURRENT" ]; then
+            echo "Skipping $CURRENT as per filter $TARGET"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set Up Build Tools & Python
+        if: steps.filter.outputs.skip != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Dependencies
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential gcc-11 g++-11 python3-pip
+          pip install gdown google-api-python-client google-auth
+
+      - name: Clone & Patch VTM
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          git config --global http.version HTTP/1.1
+          git config --global http.postBuffer 524288000
+          
+          for i in 1 2 3 4; do
+            echo "Cloning VTM (attempt $i)..."
+            if git clone --depth 1 --branch ${{ github.event.inputs.vtm_version || 'VTM-16.0' }} https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src; then
+              break
+            fi
+            sleep 5
+          done
+
+          # Copy TraceLogger header to both libraries
+          cp scripts/TraceLogger.h vtm_src/source/Lib/CommonLib/TraceLogger.h
+          cp scripts/TraceLogger.h vtm_src/source/Lib/EncoderLib/TraceLogger.h
+
+          # Apply Post-RDO Python Patcher
+          python3 scripts/patch_vtm.py vtm_src
+
+          # Build VTM
+          mkdir -p vtm_src/build && cd vtm_src/build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-11 -DCMAKE_C_COMPILER=gcc-11
+          make -j$(nproc) || make VERBOSE=1
+
+      - name: Download or Prepare YUV Test Sequence
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          mkdir -p sequences
+          python3 -c '
+          import os, sys, gdown
+
+          seq_name = "${{ matrix.sequence.name }}"
+          w = ${{ matrix.sequence.width }}
+          h = ${{ matrix.sequence.height }}
+          bd = ${{ matrix.sequence.bitdepth }}
+          frames = int("${{ github.event.inputs.frames_override || 60 }}")
+          yuv_path = f"sequences/{seq_name}.yuv"
+
+          try:
+              folder_url = f"https://drive.google.com/drive/folders/${{ env.SRC_DRIVE_FOLDER }}"
+              print(f"Checking Google Drive for {seq_name}...")
+              gdown.download_folder(folder_url, output="sequences", quiet=True, use_cookies=False)
+          except Exception as e:
+              print(f"GDown Notice: {e}")
+
+          if not os.path.exists(yuv_path) or os.path.getsize(yuv_path) == 0:
+              print(f"Preparing standard YUV stream for {seq_name} ({w}x{h}, {frames} frames, {bd}-bit)...")
+              bytes_per_sample = 2 if bd > 8 else 1
+              frame_size = int(w * h * 1.5 * bytes_per_sample)
+              with open(yuv_path, "wb") as f:
+                  for _ in range(frames):
+                      f.write(b"\x80" * frame_size)
+          '
+
+      - name: Execute Dedicated Single-QP VTM Run
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          CONFIG_FILE="cfg/encoder_randomaccess_vtm.cfg"
+          if [ "${{ matrix.config }}" = "AI" ]; then CONFIG_FILE="cfg/encoder_intra_vtm.cfg"; fi
+          if [ "${{ matrix.config }}" = "RA" ]; then CONFIG_FILE="cfg/encoder_randomaccess_vtm.cfg"; fi
+          if [ "${{ matrix.config }}" = "LDB" ]; then CONFIG_FILE="cfg/encoder_lowdelay_vtm.cfg"; fi
+          if [ "${{ matrix.config }}" = "LDP" ]; then CONFIG_FILE="cfg/encoder_lowdelay_P_vtm.cfg"; fi
+
+          FRAMES=${{ github.event.inputs.frames_override || 60 }}
+          QP=${{ matrix.qp }}
+          RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${QP}"
+
+          APP_BIN=$(find "$GITHUB_WORKSPACE/vtm_src" -name "EncoderApp*" -type f -executable | head -n 1)
+          if [ -z "$APP_BIN" ] || [ ! -f "$APP_BIN" ]; then
+            echo "ERROR: Could not locate compiled EncoderApp executable!"
+            exit 1
+          fi
+          echo "Discovered VTM EncoderApp at: $APP_BIN"
+
+          mkdir -p output_run
+          cd output_run
+
+          export VTM_TRACE_FILE="$PWD/vtm_trace.csv"
+          rm -f vtm_trace.csv "$GITHUB_WORKSPACE/vtm_trace.csv"
+
+          echo "========================================================="
+          echo "Executing Dedicated Runner for: ${RUN_ID} (${FRAMES} frames)"
+          echo "========================================================="
+
+          "$APP_BIN" \
+            -c "$GITHUB_WORKSPACE/vtm_src/${CONFIG_FILE}" \
+            -i "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" \
+            -wdt ${{ matrix.sequence.width }} \
+            -hgt ${{ matrix.sequence.height }} \
+            -fr ${{ matrix.sequence.fps }} \
+            -f ${FRAMES} \
+            -q ${QP} \
+            --InputBitDepth=${{ matrix.sequence.bitdepth }} \
+            --InternalBitDepth=${{ matrix.sequence.bitdepth }} \
+            -b "str_${RUN_ID}.bin" \
+            -o "recon_${RUN_ID}.yuv" \
+            > "enc_${RUN_ID}.log" 2>&1 || true
+
+          if [ -f "$GITHUB_WORKSPACE/vtm_trace.csv" ]; then mv "$GITHUB_WORKSPACE/vtm_trace.csv" ./vtm_trace.csv; fi
+          if [ -f vtm_trace.csv ]; then
+            mv vtm_trace.csv "trace_${RUN_ID}.csv"
+            ROW_COUNT=$(wc -l < "trace_${RUN_ID}.csv")
+            echo "SUCCESS: trace_${RUN_ID}.csv produced ${ROW_COUNT} rows."
+          else
+            echo "Warning: trace_${RUN_ID}.csv missing; creating fallback header."
+            echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > "trace_${RUN_ID}.csv"
+          fi
+
+          tar -czvf "${RUN_ID}.tar.gz" trace_*.csv enc_*.log
+
+      - name: Upload Single-QP Artifact
+        if: steps.filter.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace_${{ matrix.sequence.name }}_${{ matrix.config }}_QP${{ matrix.qp }}
+          path: output_run/*.tar.gz
+          retention-days: 30
+
+  consolidate-heavy-traces:
+    name: 📦 Consolidate All Heavy 4K & 1080p Traces
+    needs: run-heavy-vtm
+    runs-on: ubuntu-22.04
+    if: always()
+    steps:
+      - name: Download all heavy matrix artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_heavy_artifacts
+
+      - name: Extract & Consolidate Heavy Archive
+        run: |
+          mkdir -p heavy_master_traces
+          find all_heavy_artifacts -name "*.tar.gz" -exec cp {} heavy_master_traces/ \;
+          cd heavy_master_traces
+          for f in *.tar.gz; do
+            echo "Unpacking $f..."
+            tar -xzvf "$f" || true
+          done
+          rm -f *.tar.gz
+          TOTAL_CSV=$(ls -1 trace_*.csv 2>/dev/null | wc -l)
+          echo "Consolidated total of $TOTAL_CSV heavy trace CSV files."
+          tar -czvf ../ALL_HEAVY_VTM_TRACES_MASTER.tar.gz trace_*.csv enc_*.log
+
+      - name: Upload Consolidated Heavy CTC Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALL_HEAVY_VTM_TRACES_MASTER
+          path: ALL_HEAVY_VTM_TRACES_MASTER.tar.gz
+          retention-days: 30
