@@ -5,7 +5,8 @@ Python script to:
 2. Inject Post-RDO final transform extraction hooks into VTM CABACWriter.cpp.
 Guarantees 1-to-1 post-RDO execution stream (filters out CABACEstimator RDO trials),
 verifies exact CBF across Luma and Chroma using 2D stride-aware CoeffBuf scanning,
-accurately models Implicit & Explicit MTS (DST-7/DCT-8), and applies VVC HF Zeroing rules.
+accurately models Implicit (getImplicitMTSIntraEnabled) & Explicit MTS (DST-7/DCT-8),
+and applies VVC HF Zeroing rules.
 """
 
 import os
@@ -121,7 +122,7 @@ def patch_cabac_writer(vtm_root):
         trHor = "DCT8";
         trVer = "DCT8";
       } else if (tu.mtsIdx[compID] == MTS_DCT2_DCT2) {
-        if (cs.sps->getUseImplicitMTS() && compID == COMPONENT_Y && CU::isIntra(*tu.cu) && tu.cu->ispMode == NOT_INTRA_SUBPARTITIONS && tu.blocks[compID].width <= 16 && tu.blocks[compID].height <= 16) {
+        if (cs.sps->getImplicitMTSIntraEnabled() && compID == COMPONENT_Y && CU::isIntra(cu) && !cu.ispMode && tu.blocks[compID].width <= 16 && tu.blocks[compID].height <= 16) {
           trHor = "DST7";
           trVer = "DST7";
         }
