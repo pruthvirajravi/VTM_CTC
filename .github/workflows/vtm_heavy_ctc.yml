@@ -153,6 +153,13 @@ jobs:
           mkdir -p output_run
           cd output_run
 
+          # Link/Copy input files to match exact names defined in per-sequence config
+          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" ./
+          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./Tango2_3840x2160_60fps_10bit_420.yuv" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./Campfire_3840x2160_30fps_10bit_420.yuv" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./MarketPlace_1920x1080_60fps_10bit_420.yuv" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./RitualDance_1920x1080_60fps_10bit_420.yuv" 2>/dev/null || true
+
           export VTM_TRACE_FILE="$PWD/vtm_trace.csv"
           rm -f vtm_trace.csv "$GITHUB_WORKSPACE/vtm_trace.csv"
 
