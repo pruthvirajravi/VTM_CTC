@@ -4,7 +4,8 @@ Python script to:
 1. Safely remove -Werror / warnings-as-errors from VTM build scripts.
 2. Inject Post-RDO final transform extraction hooks into VTM CABACWriter.cpp.
 Guarantees 1-to-1 post-RDO execution stream (filters out CABACEstimator RDO trials),
-verifies exact CBF using 2D stride-aware CoeffBuf::at(x, y) scanning, and models HF zeroing.
+verifies exact CBF across Luma and Chroma using 2D stride-aware CoeffBuf scanning,
+and models VVC HF Zeroing rules.
 """
 
 import os
@@ -76,7 +77,7 @@ def patch_cabac_writer(vtm_root):
       uint8_t tuH = (uint8_t)area.height;
       uint8_t bitDepth = (uint8_t)cs.sps->getBitDepth(toChannelType(compID));
       
-      // Exact 2D Stride-Aware Non-Zero Coefficient Scan
+      // Multi-layer 2D Stride-Aware Non-Zero Coefficient Scan
       bool hasNonZeroCoeffs = false;
       const CCoeffBuf &cb = tu.getCoeffs(compID);
       for (unsigned cy = 0; cy < cb.height; cy++)
@@ -92,7 +93,13 @@ def patch_cabac_writer(vtm_root):
         if (hasNonZeroCoeffs) break;
       }
 
-      uint8_t cbfVal = (hasNonZeroCoeffs || TU::getCbf(tu, compID) || cbf[compID]) ? 1 : 0;
+      uint8_t cbfVal = 0;
+      if (hasNonZeroCoeffs || TU::getCbf(tu, compID) || cbf[compID] || TU::getCbfAtDepth(tu, compID, partitioner.currTrDepth)) {
+        cbfVal = 1;
+      }
+      if (compID == COMPONENT_Cb && chromaCbfs.Cb) cbfVal = 1;
+      if (compID == COMPONENT_Cr && chromaCbfs.Cr) cbfVal = 1;
+
       std::string compStr = (compID == COMPONENT_Y) ? "Y" : ((compID == COMPONENT_Cb) ? "Cb" : "Cr");
       
       std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DST7_DCT8 ? "DST7" : "DCT8")));
