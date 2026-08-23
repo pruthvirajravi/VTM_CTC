@@ -5,7 +5,7 @@ Python script to:
 2. Inject Post-RDO final transform extraction hooks into VTM CABACWriter.cpp.
 Guarantees 1-to-1 post-RDO execution stream (filters out CABACEstimator RDO trials),
 verifies exact CBF across Luma and Chroma using 2D stride-aware CoeffBuf scanning,
-and models VVC HF Zeroing rules.
+accurately models Implicit & Explicit MTS (DST-7/DCT-8), and applies VVC HF Zeroing rules.
 """
 
 import os
@@ -102,8 +102,30 @@ def patch_cabac_writer(vtm_root):
 
       std::string compStr = (compID == COMPONENT_Y) ? "Y" : ((compID == COMPONENT_Cb) ? "Cb" : "Cr");
       
-      std::string trHor = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DST7_DCT8 ? "DST7" : "DCT8")));
-      std::string trVer = (tu.mtsIdx[compID] == MTS_SKIP ? "TS" : (tu.mtsIdx[compID] == MTS_DCT2_DCT2 ? "DCT2" : (tu.mtsIdx[compID] == MTS_DST7_DST7 || tu.mtsIdx[compID] == MTS_DCT8_DST7 ? "DST7" : "DCT8")));
+      // Transform Type Derivation (Implicit MTS + Explicit MTS + Transform Skip)
+      std::string trHor = "DCT2";
+      std::string trVer = "DCT2";
+      if (tu.mtsIdx[compID] == MTS_SKIP) {
+        trHor = "TS";
+        trVer = "TS";
+      } else if (tu.mtsIdx[compID] == MTS_DST7_DST7) {
+        trHor = "DST7";
+        trVer = "DST7";
+      } else if (tu.mtsIdx[compID] == MTS_DCT8_DST7) {
+        trHor = "DCT8";
+        trVer = "DST7";
+      } else if (tu.mtsIdx[compID] == MTS_DST7_DCT8) {
+        trHor = "DST7";
+        trVer = "DCT8";
+      } else if (tu.mtsIdx[compID] == MTS_DCT8_DCT8) {
+        trHor = "DCT8";
+        trVer = "DCT8";
+      } else if (tu.mtsIdx[compID] == MTS_DCT2_DCT2) {
+        if (cs.sps->getUseImplicitMTS() && compID == COMPONENT_Y && CU::isIntra(*tu.cu) && tu.cu->ispMode == NOT_INTRA_SUBPARTITIONS && tu.blocks[compID].width <= 16 && tu.blocks[compID].height <= 16) {
+          trHor = "DST7";
+          trVer = "DST7";
+        }
+      }
       
       // Calculate Effective Dimensions applying VVC High-Frequency Zeroing Rules
       uint8_t trEffW = tuW;
