@@ -160,18 +160,13 @@ jobs:
           echo "Executing Dedicated Runner for: ${RUN_ID} (${FRAMES} frames)"
           echo "========================================================="
 
+          # Official JVET dual-config invocation: Base Config + Per-Sequence Config
           "$APP_BIN" \
             -c "$GITHUB_WORKSPACE/vtm_src/${CONFIG_FILE}" \
+            -c "$GITHUB_WORKSPACE/vtm_src/cfg/per-sequence/${{ matrix.sequence.name }}.cfg" \
             -i "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" \
-            -wdt ${{ matrix.sequence.width }} \
-            -hgt ${{ matrix.sequence.height }} \
-            -fr ${{ matrix.sequence.fps }} \
             -f ${FRAMES} \
             -q ${QP} \
-            --InputBitDepth ${{ matrix.sequence.bitdepth }} \
-            --InternalBitDepth ${{ matrix.sequence.bitdepth }} \
-            --OutputBitDepth ${{ matrix.sequence.bitdepth }} \
-            --MSBExtendedBitDepth ${{ matrix.sequence.bitdepth }} \
             -b "str_${RUN_ID}.bin" \
             > "enc_${RUN_ID}.log" 2>&1 || true
 
