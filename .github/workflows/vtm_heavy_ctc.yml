@@ -18,9 +18,9 @@ on:
           - 'RitualDance'
         default: 'All Heavy (Tango2, Campfire, MarketPlace, RitualDance)'
       frames_override:
-        description: 'Frames per run (e.g. 50 for quick full, 300 for full CTC)'
+        description: 'Frames per run (e.g. 30 for 4K, 60 for 1080p)'
         required: true
-        default: '60'
+        default: '30'
 
 env:
   SRC_DRIVE_FOLDER: "1CtXEkjIkd5G1Z-9xQvJgT7ICCtQAETez"
@@ -35,9 +35,9 @@ jobs:
       fail-fast: false
       matrix:
         sequence:
-          # Class A1 (4K UHD 3840x2160)
+          # Class A1 (4K UHD 3840x2160 10-bit)
           - { name: "Tango2", width: 3840, height: 2160, fps: 60, bitdepth: 10 }
-          # Class A2 (4K UHD 3840x2160)
+          # Class A2 (4K UHD 3840x2160 10-bit)
           - { name: "Campfire", width: 3840, height: 2160, fps: 30, bitdepth: 10 }
           # Class B (1080p FHD 1920x1080 10-bit)
           - { name: "MarketPlace", width: 1920, height: 1080, fps: 60, bitdepth: 10 }
@@ -111,7 +111,7 @@ jobs:
           w = ${{ matrix.sequence.width }}
           h = ${{ matrix.sequence.height }}
           bd = ${{ matrix.sequence.bitdepth }}
-          frames = int("${{ github.event.inputs.frames_override || 60 }}")
+          frames = int("${{ github.event.inputs.frames_override || 30 }}")
           yuv_path = f"sequences/{seq_name}.yuv"
 
           try:
@@ -139,7 +139,7 @@ jobs:
           if [ "${{ matrix.config }}" = "LDB" ]; then CONFIG_FILE="cfg/encoder_lowdelay_vtm.cfg"; fi
           if [ "${{ matrix.config }}" = "LDP" ]; then CONFIG_FILE="cfg/encoder_lowdelay_P_vtm.cfg"; fi
 
-          FRAMES=${{ github.event.inputs.frames_override || 60 }}
+          FRAMES=${{ github.event.inputs.frames_override || 30 }}
           QP=${{ matrix.qp }}
           RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${QP}"
 
@@ -168,10 +168,11 @@ jobs:
             -fr ${{ matrix.sequence.fps }} \
             -f ${FRAMES} \
             -q ${QP} \
-            --InputBitDepth=${{ matrix.sequence.bitdepth }} \
-            --InternalBitDepth=${{ matrix.sequence.bitdepth }} \
+            --InputBitDepth ${{ matrix.sequence.bitdepth }} \
+            --InternalBitDepth ${{ matrix.sequence.bitdepth }} \
+            --OutputBitDepth ${{ matrix.sequence.bitdepth }} \
+            --MSBExtendedBitDepth ${{ matrix.sequence.bitdepth }} \
             -b "str_${RUN_ID}.bin" \
-            -o "recon_${RUN_ID}.yuv" \
             > "enc_${RUN_ID}.log" 2>&1 || true
 
           if [ -f "$GITHUB_WORKSPACE/vtm_trace.csv" ]; then mv "$GITHUB_WORKSPACE/vtm_trace.csv" ./vtm_trace.csv; fi
@@ -180,7 +181,8 @@ jobs:
             ROW_COUNT=$(wc -l < "trace_${RUN_ID}.csv")
             echo "SUCCESS: trace_${RUN_ID}.csv produced ${ROW_COUNT} rows."
           else
-            echo "Warning: trace_${RUN_ID}.csv missing; creating fallback header."
+            echo "Warning: trace_${RUN_ID}.csv missing; printing encoder log below:"
+            cat "enc_${RUN_ID}.log" || true
             echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > "trace_${RUN_ID}.csv"
           fi
 
