@@ -216,10 +216,42 @@ jobs:
           PACKAGE_NAME="${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz"
           python3 "$GITHUB_WORKSPACE/scripts/upload_to_gdrive.py" "$PACKAGE_NAME" "${{ env.DST_DRIVE_FOLDER }}"
 
-      - name: GitHub Actions Fallback Artifact Upload
+      - name: Individual Matrix Job Artifact Upload
         if: steps.filter.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: trace_${{ matrix.sequence.name }}_${{ matrix.config }}
           path: output_run/*.tar.gz
           retention-days: 14
+
+  package-all-ctc:
+    name: 📦 Consolidate All CTC Traces (Single Master Bundle)
+    needs: run-vtm
+    runs-on: ubuntu-22.04
+    if: always()
+    steps:
+      - name: Download all matrix artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded_all_matrix_artifacts
+
+      - name: Extract & Consolidate Master Bundle
+        run: |
+          mkdir -p master_ctc_traces
+          find downloaded_all_matrix_artifacts -name "*.tar.gz" -exec cp {} master_ctc_traces/ \;
+          cd master_ctc_traces
+          for f in *.tar.gz; do
+            echo "Unpacking $f..."
+            tar -xzvf "$f" || true
+          done
+          rm -f *.tar.gz
+          TOTAL_CSV=$(ls -1 trace_*.csv 2>/dev/null | wc -l)
+          echo "Consolidated total of $TOTAL_CSV trace CSV files."
+          tar -czvf ../ALL_VTM_CTC_TRACES_MASTER.tar.gz trace_*.csv enc_*.log
+
+      - name: Upload Master Unified CTC Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALL_VTM_CTC_TRACES_MASTER
+          path: ALL_VTM_CTC_TRACES_MASTER.tar.gz
+          retention-days: 30
