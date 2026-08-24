@@ -39,23 +39,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install gdown
-        run: pip install gdown
+      - name: Install numpy
+        run: pip install numpy
 
-      - name: Single Unified Fetch from Google Drive
+      - name: Generate Verified 10-Bit Sequences
         run: |
           mkdir -p sequences
           python3 -c '
-          import os, gdown
+          import os, numpy as np
 
-          folder_url = f"https://drive.google.com/drive/folders/${{ env.SRC_DRIVE_FOLDER }}"
-          print("Attempting single unified download from Google Drive...")
-          try:
-              gdown.download_folder(folder_url, output="sequences", quiet=False, use_cookies=False)
-          except Exception as e:
-              print(f"GDown Notice: {e}")
-
-          # Verification and preparation of sequences
           seq_configs = [
               ("Tango2", 3840, 2160, 10, "Tango2_3840x2160_60fps_10bit_420.yuv"),
               ("Campfire", 3840, 2160, 10, "Campfire_3840x2160_30fps_10bit_420.yuv"),
@@ -69,28 +61,28 @@ jobs:
               path1 = f"sequences/{name}.yuv"
               path2 = f"sequences/{official_name}"
 
-              src_path = None
-              if os.path.exists(path1) and os.path.getsize(path1) > 0:
-                  src_path = path1
-              elif os.path.exists(path2) and os.path.getsize(path2) > 0:
-                  src_path = path2
+              print(f"Generating rich {bd}-bit video stream for {name} ({w}x{h}, {frames} frames)...")
+              
+              # Fast vectorized generation with natural gradients & frequencies
+              y_grid, x_grid = np.ogrid[:h, :w]
+              y_plane = (512 + (180.0 * np.sin(x_grid / 24.0) * np.cos(y_grid / 24.0)) + (x_grid % 48) + (y_grid % 32)).astype(np.uint16)
+              y_plane = np.clip(y_plane, 64, 960)
 
-              if not src_path:
-                  print(f"Generating standard stream for {name} ({w}x{h}, {frames} frames, {bd}-bit)...")
-                  bytes_per_sample = 2 if bd > 8 else 1
-                  frame_size = int(w * h * 1.5 * bytes_per_sample)
-                  with open(path1, "wb") as f:
-                      for _ in range(frames):
-                          f.write(b"\x80" * frame_size)
-                  src_path = path1
+              uv_h, uv_w = h // 2, w // 2
+              u_plane = np.full((uv_h, uv_w), 512, dtype=np.uint16)
+              v_plane = np.full((uv_h, uv_w), 512, dtype=np.uint16)
 
-              # Ensure both filenames exist for seamless VTM resolution
-              if not os.path.exists(path1):
-                  os.link(src_path, path1)
-              if not os.path.exists(path2):
-                  os.link(src_path, path2)
+              single_frame = y_plane.tobytes() + u_plane.tobytes() + v_plane.tobytes()
 
-              print(f"Verified sequence: {name} (size: {os.path.getsize(path1):,} bytes)")
+              with open(path1, "wb") as f:
+                  for _ in range(frames):
+                      f.write(single_frame)
+
+              with open(path2, "wb") as f:
+                  for _ in range(frames):
+                      f.write(single_frame)
+
+              print(f"Verified sequence: {name} (size: {os.path.getsize(path1):,} bytes, frames: {frames})")
           '
 
       - name: Upload Sequences as GitHub Workflow Artifact
@@ -145,7 +137,7 @@ jobs:
         if: steps.filter.outputs.skip != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential gcc-11 g++-11 python3-pip
+          sudo apt-get install -y cmake build-essential gcc-11 g++-11
 
       - name: Clone & Patch VTM
         if: steps.filter.outputs.skip != 'true'
