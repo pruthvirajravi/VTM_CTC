@@ -27,7 +27,81 @@ env:
   DST_DRIVE_FOLDER: "1B2TMPqlOLl1HkA7jfRgcOv4cjgtVOO6e"
 
 jobs:
+  prepare-sequences:
+    name: 📥 Single Pre-Fetch Sequences (No GDrive Rate Limits)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install gdown
+        run: pip install gdown
+
+      - name: Single Unified Fetch from Google Drive
+        run: |
+          mkdir -p sequences
+          python3 -c '
+          import os, gdown
+
+          folder_url = f"https://drive.google.com/drive/folders/${{ env.SRC_DRIVE_FOLDER }}"
+          print("Attempting single unified download from Google Drive...")
+          try:
+              gdown.download_folder(folder_url, output="sequences", quiet=False, use_cookies=False)
+          except Exception as e:
+              print(f"GDown Notice: {e}")
+
+          # Verification and preparation of sequences
+          seq_configs = [
+              ("Tango2", 3840, 2160, 10, "Tango2_3840x2160_60fps_10bit_420.yuv"),
+              ("Campfire", 3840, 2160, 10, "Campfire_3840x2160_30fps_10bit_420.yuv"),
+              ("MarketPlace", 1920, 1080, 10, "MarketPlace_1920x1080_60fps_10bit_420.yuv"),
+              ("RitualDance", 1920, 1080, 10, "RitualDance_1920x1080_60fps_10bit_420.yuv"),
+          ]
+
+          frames = int("${{ github.event.inputs.frames_override || 30 }}")
+
+          for name, w, h, bd, official_name in seq_configs:
+              path1 = f"sequences/{name}.yuv"
+              path2 = f"sequences/{official_name}"
+
+              src_path = None
+              if os.path.exists(path1) and os.path.getsize(path1) > 0:
+                  src_path = path1
+              elif os.path.exists(path2) and os.path.getsize(path2) > 0:
+                  src_path = path2
+
+              if not src_path:
+                  print(f"Generating standard stream for {name} ({w}x{h}, {frames} frames, {bd}-bit)...")
+                  bytes_per_sample = 2 if bd > 8 else 1
+                  frame_size = int(w * h * 1.5 * bytes_per_sample)
+                  with open(path1, "wb") as f:
+                      for _ in range(frames):
+                          f.write(b"\x80" * frame_size)
+                  src_path = path1
+
+              # Ensure both filenames exist for seamless VTM resolution
+              if not os.path.exists(path1):
+                  os.link(src_path, path1)
+              if not os.path.exists(path2):
+                  os.link(src_path, path2)
+
+              print(f"Verified sequence: {name} (size: {os.path.getsize(path1):,} bytes)")
+          '
+
+      - name: Upload Sequences as GitHub Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: heavy_ctc_sequences
+          path: sequences/
+          retention-days: 1
+
   run-heavy-vtm:
+    needs: prepare-sequences
     name: ${{ matrix.sequence.name }} | ${{ matrix.config }} | QP${{ matrix.qp }}
     runs-on: ubuntu-22.04
     timeout-minutes: 360
@@ -72,7 +146,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential gcc-11 g++-11 python3-pip
-          pip install gdown google-api-python-client google-auth
 
       - name: Clone & Patch VTM
         if: steps.filter.outputs.skip != 'true'
@@ -100,35 +173,12 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-11 -DCMAKE_C_COMPILER=gcc-11
           make -j$(nproc) || make VERBOSE=1
 
-      - name: Download or Prepare YUV Test Sequence
+      - name: Download Sequences from GitHub Internal Memory
         if: steps.filter.outputs.skip != 'true'
-        run: |
-          mkdir -p sequences
-          python3 -c '
-          import os, sys, gdown
-
-          seq_name = "${{ matrix.sequence.name }}"
-          w = ${{ matrix.sequence.width }}
-          h = ${{ matrix.sequence.height }}
-          bd = ${{ matrix.sequence.bitdepth }}
-          frames = int("${{ github.event.inputs.frames_override || 30 }}")
-          yuv_path = f"sequences/{seq_name}.yuv"
-
-          try:
-              folder_url = f"https://drive.google.com/drive/folders/${{ env.SRC_DRIVE_FOLDER }}"
-              print(f"Checking Google Drive for {seq_name}...")
-              gdown.download_folder(folder_url, output="sequences", quiet=True, use_cookies=False)
-          except Exception as e:
-              print(f"GDown Notice: {e}")
-
-          if not os.path.exists(yuv_path) or os.path.getsize(yuv_path) == 0:
-              print(f"Preparing standard YUV stream for {seq_name} ({w}x{h}, {frames} frames, {bd}-bit)...")
-              bytes_per_sample = 2 if bd > 8 else 1
-              frame_size = int(w * h * 1.5 * bytes_per_sample)
-              with open(yuv_path, "wb") as f:
-                  for _ in range(frames):
-                      f.write(b"\x80" * frame_size)
-          '
+        uses: actions/download-artifact@v4
+        with:
+          name: heavy_ctc_sequences
+          path: sequences
 
       - name: Execute Dedicated Single-QP VTM Run
         if: steps.filter.outputs.skip != 'true'
@@ -153,12 +203,8 @@ jobs:
           mkdir -p output_run
           cd output_run
 
-          # Link/Copy input files to match exact names defined in per-sequence config
-          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" ./
-          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./Tango2_3840x2160_60fps_10bit_420.yuv" 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./Campfire_3840x2160_30fps_10bit_420.yuv" 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./MarketPlace_1920x1080_60fps_10bit_420.yuv" 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" "./RitualDance_1920x1080_60fps_10bit_420.yuv" 2>/dev/null || true
+          # Copy sequence files to working folder
+          cp "$GITHUB_WORKSPACE/sequences/"* ./ 2>/dev/null || true
 
           export VTM_TRACE_FILE="$PWD/vtm_trace.csv"
           rm -f vtm_trace.csv "$GITHUB_WORKSPACE/vtm_trace.csv"
