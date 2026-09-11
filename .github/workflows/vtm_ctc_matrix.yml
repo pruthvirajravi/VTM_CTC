@@ -1,257 +1,66 @@
-name: VTM CTC Parallel Matrix Execution
+name: VTM Verified Genuine-Video Pilot
 
 on:
   workflow_dispatch:
-    inputs:
-      vtm_version:
-        description: 'VTM Git Tag or Branch (e.g. VTM-16.0)'
-        required: true
-        default: 'VTM-16.0'
-      quick_test:
-        description: 'Run 10-frame quick validation (leave UNCHECKED for standard CTC runs)'
-        type: boolean
-        default: false
-      target_config:
-        description: 'Configuration Profile to Run'
-        type: choice
-        options:
-          - 'All (AI, RA, LDB, LDP)'
-          - 'AI'
-          - 'RA'
-          - 'LDB'
-          - 'LDP'
-        default: 'All (AI, RA, LDB, LDP)'
 
-env:
-  SRC_DRIVE_FOLDER: "1CtXEkjIkd5G1Z-9xQvJgT7ICCtQAETez"
-  DST_DRIVE_FOLDER: "1B2TMPqlOLl1HkA7jfRgcOv4cjgtVOO6e"
+permissions:
+  contents: read
+
+concurrency:
+  group: verified-vtm-pilot
+  cancel-in-progress: false
 
 jobs:
-  run-vtm:
-    name: ${{ matrix.sequence.name }} | ${{ matrix.config }}
+  verified-pilot:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        sequence:
-          # Class C (WVGA 832x480) - Full 10s CTC
-          - { name: "BQMall", width: 832, height: 480, fps: 60, frames: 600, bitdepth: 8 }
-          - { name: "BasketballDrill", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
-          - { name: "PartyScene", width: 832, height: 480, fps: 50, frames: 500, bitdepth: 8 }
-          - { name: "RaceHorsesC", width: 832, height: 480, fps: 30, frames: 300, bitdepth: 8 }
-          # Class D (WQVGA 416x240) - Full 10s CTC
-          - { name: "BasketballPass", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
-          - { name: "BQSquare", width: 416, height: 240, fps: 60, frames: 600, bitdepth: 8 }
-          - { name: "BlowingBubbles", width: 416, height: 240, fps: 50, frames: 500, bitdepth: 8 }
-          - { name: "RaceHorses", width: 416, height: 240, fps: 30, frames: 300, bitdepth: 8 }
-          # Class E (720p 1280x720) - 150-300 frames
-          - { name: "FourPeople", width: 1280, height: 720, fps: 60, frames: 300, bitdepth: 8 }
-          - { name: "Johnny", width: 1280, height: 720, fps: 60, frames: 300, bitdepth: 8 }
-          - { name: "KristenAndSara", width: 1280, height: 720, fps: 60, frames: 300, bitdepth: 8 }
-          # Class B (1080p FHD 1920x1080) - Optimized for 2-core runners (60 frames)
-          - { name: "BasketballDrive", width: 1920, height: 1080, fps: 50, frames: 50, bitdepth: 8 }
-          - { name: "BQTerrace", width: 1920, height: 1080, fps: 60, frames: 60, bitdepth: 8 }
-          - { name: "MarketPlace", width: 1920, height: 1080, fps: 60, frames: 60, bitdepth: 10 }
-          - { name: "RitualDance", width: 1920, height: 1080, fps: 60, frames: 60, bitdepth: 10 }
-          # Class A1 & A2 (4K UHD 3840x2160) - Optimized for 2-core runners (20-30 frames)
-          - { name: "Tango2", width: 3840, height: 2160, fps: 60, frames: 30, bitdepth: 10 }
-          - { name: "Campfire", width: 3840, height: 2160, fps: 30, frames: 20, bitdepth: 10 }
-        config: ["AI", "RA", "LDB", "LDP"]
-
+    timeout-minutes: 180
+    env:
+      VTM_COMMIT: 3711eda2cff4777b28b3338d6bc4783424fc6d30
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Check Config Filter
-        id: filter
-        run: |
-          TARGET="${{ github.event.inputs.target_config || 'All (AI, RA, LDB, LDP)' }}"
-          CURRENT="${{ matrix.config }}"
-          if [ "$TARGET" != "All (AI, RA, LDB, LDP)" ] && [ "$TARGET" != "$CURRENT" ]; then
-            echo "Skipping $CURRENT as per filter $TARGET"
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set Up Build Tools & Python
-        if: steps.filter.outputs.skip != 'true'
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-
-      - name: Install System Dependencies
-        if: steps.filter.outputs.skip != 'true'
+          python-version: '3.11'
+      - name: Install build and validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential gcc-11 g++-11 python3-pip
-          pip install gdown google-api-python-client google-auth
-
-      - name: Clone & Patch VTM
-        if: steps.filter.outputs.skip != 'true'
+          sudo apt-get install -y cmake gcc-11 g++-11
+          python -m pip install numpy==1.26.4 gdown==5.2.0
+      - name: Obtain pinned official VTM source
         run: |
-          git config --global http.version HTTP/1.1
-          git config --global http.postBuffer 524288000
-          
-          # Resilient clone with retry
-          for i in 1 2 3 4; do
-            echo "Cloning VTM (attempt $i)..."
-            if git clone --depth 1 --branch ${{ github.event.inputs.vtm_version || 'VTM-16.0' }} https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src; then
-              break
-            fi
-            sleep 5
-          done
-
-          # Copy TraceLogger header to both libraries
-          cp scripts/TraceLogger.h vtm_src/source/Lib/CommonLib/TraceLogger.h
-          cp scripts/TraceLogger.h vtm_src/source/Lib/EncoderLib/TraceLogger.h
-
-          # Apply Post-RDO Python Patcher
-          python3 scripts/patch_vtm.py vtm_src
-
-          # Build VTM
-          mkdir -p vtm_src/build && cd vtm_src/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-11 -DCMAKE_C_COMPILER=gcc-11
-          make -j$(nproc) || make VERBOSE=1
-
-      - name: Download or Prepare YUV Test Sequence
-        if: steps.filter.outputs.skip != 'true'
+          git clone --depth 1 --branch VTM-18.0 https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git vtm_src
+          test "$(git -C vtm_src rev-parse HEAD)" = "$VTM_COMMIT"
+      - name: Validate collection helpers
+        run: python -m unittest discover -s scripts -p test_verified_collection.py -v
+      - name: Build uninstrumented encoder control
         run: |
-          mkdir -p sequences
-          python3 -c '
-          import os, sys, gdown
-
-          seq_name = "${{ matrix.sequence.name }}"
-          w = ${{ matrix.sequence.width }}
-          h = ${{ matrix.sequence.height }}
-          bd = ${{ matrix.sequence.bitdepth }}
-          frames = 10 if "${{ github.event.inputs.quick_test }}" == "true" else ${{ matrix.sequence.frames }}
-          yuv_path = f"sequences/{seq_name}.yuv"
-
-          try:
-              folder_url = f"https://drive.google.com/drive/folders/${{ env.SRC_DRIVE_FOLDER }}"
-              print(f"Checking Google Drive for {seq_name}...")
-              gdown.download_folder(folder_url, output="sequences", quiet=True, use_cookies=False)
-          except Exception as e:
-              print(f"GDown Notice: {e}")
-
-          if not os.path.exists(yuv_path) or os.path.getsize(yuv_path) == 0:
-              print(f"Preparing standard YUV stream for {seq_name} ({w}x{h}, {frames} frames, {bd}-bit)...")
-              bytes_per_sample = 2 if bd > 8 else 1
-              frame_size = int(w * h * 1.5 * bytes_per_sample)
-              with open(yuv_path, "wb") as f:
-                  for _ in range(frames):
-                      f.write(b"\x80" * frame_size)
-          '
-
-      - name: Execute VTM Across QPs (22, 27, 32, 37)
-        if: steps.filter.outputs.skip != 'true'
+          cmake -S vtm_src -B vtm_src/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-11 -DCMAKE_CXX_COMPILER=g++-11 '-DCMAKE_CXX_FLAGS=-DRExt__HIGH_BIT_DEPTH_SUPPORT=0 -DRExt__HIGH_PRECISION_FORWARD_TRANSFORM=0'
+          cmake --build vtm_src/build --target EncoderApp DecoderApp --parallel 4
+          mkdir -p binaries
+          cp vtm_src/bin/EncoderAppStatic binaries/EncoderAppBaseline
+      - name: Apply checked arithmetic and final-TU hooks
+        run: python scripts/patch_verified_vtm.py vtm_src
+      - name: Build instrumented encoder and decoder
         run: |
-          CONFIG_FILE="cfg/encoder_randomaccess_vtm.cfg"
-          if [ "${{ matrix.config }}" = "AI" ]; then CONFIG_FILE="cfg/encoder_intra_vtm.cfg"; fi
-          if [ "${{ matrix.config }}" = "RA" ]; then CONFIG_FILE="cfg/encoder_randomaccess_vtm.cfg"; fi
-          if [ "${{ matrix.config }}" = "LDB" ]; then CONFIG_FILE="cfg/encoder_lowdelay_vtm.cfg"; fi
-          if [ "${{ matrix.config }}" = "LDP" ]; then CONFIG_FILE="cfg/encoder_lowdelay_P_vtm.cfg"; fi
-
-          FRAMES=${{ matrix.sequence.frames }}
-          if [ "${{ github.event.inputs.quick_test }}" == "true" ]; then
-            FRAMES=10
-          fi
-
-          # Locate compiled binary
-          APP_BIN=$(find "$GITHUB_WORKSPACE/vtm_src" -name "EncoderApp*" -type f -executable | head -n 1)
-          if [ -z "$APP_BIN" ] || [ ! -f "$APP_BIN" ]; then
-            echo "ERROR: Could not locate compiled EncoderApp executable in $GITHUB_WORKSPACE/vtm_src!"
-            find "$GITHUB_WORKSPACE/vtm_src" -type f
-            exit 1
-          fi
-          echo "Discovered VTM EncoderApp at: $APP_BIN"
-
-          mkdir -p output_run
-          cd output_run
-
-          for QP in 22 27 32 37; do
-            RUN_ID="${{ matrix.sequence.name }}_${{ matrix.config }}_QP${QP}"
-            echo "=========================================="
-            echo "Running: ${RUN_ID} (Frames: ${FRAMES})"
-            echo "=========================================="
-
-            export VTM_TRACE_FILE="$PWD/vtm_trace.csv"
-            rm -f vtm_trace.csv "$GITHUB_WORKSPACE/vtm_trace.csv"
-
-            "$APP_BIN" \
-              -c "$GITHUB_WORKSPACE/vtm_src/${CONFIG_FILE}" \
-              -i "$GITHUB_WORKSPACE/sequences/${{ matrix.sequence.name }}.yuv" \
-              -wdt ${{ matrix.sequence.width }} \
-              -hgt ${{ matrix.sequence.height }} \
-              -fr ${{ matrix.sequence.fps }} \
-              -f ${FRAMES} \
-              -q ${QP} \
-              --InputBitDepth=${{ matrix.sequence.bitdepth }} \
-              --InternalBitDepth=${{ matrix.sequence.bitdepth }} \
-              -b "str_${RUN_ID}.bin" \
-              -o "recon_${RUN_ID}.yuv" \
-              > "enc_${RUN_ID}.log" 2>&1 || true
-
-            if [ -f "$GITHUB_WORKSPACE/vtm_trace.csv" ]; then mv "$GITHUB_WORKSPACE/vtm_trace.csv" ./vtm_trace.csv; fi
-            if [ -f vtm_trace.csv ]; then
-              mv vtm_trace.csv "trace_${RUN_ID}.csv"
-              ROW_COUNT=$(wc -l < "trace_${RUN_ID}.csv")
-              echo "SUCCESS: trace_${RUN_ID}.csv produced ${ROW_COUNT} rows."
-            else
-              echo "Warning: trace_${RUN_ID}.csv missing; creating fallback header."
-              echo "task_id,poc,slice_type,ctu_addr,tu_x,tu_y,tu_w,tu_h,tr_eff_w,tr_eff_h,comp,tr_type_hor,tr_type_ver,direction,stage,cbf,bit_depth,tree_type,pred_mode" > "trace_${RUN_ID}.csv"
-            fi
-          done
-
-          tar -czvf "${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz" trace_*.csv enc_*.log
-
-      - name: Upload Artifacts to Google Drive Destination
-        if: steps.filter.outputs.skip != 'true'
-        env:
-          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+          cmake --build vtm_src/build --target EncoderApp DecoderApp --parallel 4
+          cp vtm_src/bin/EncoderAppStatic binaries/EncoderAppTraced
+          cp vtm_src/bin/DecoderAppStatic binaries/DecoderAppTraced
+      - name: Run genuine-video pilot and verify exact results
         run: |
-          cd output_run
-          PACKAGE_NAME="${{ matrix.sequence.name }}_${{ matrix.config }}_allQPs.tar.gz"
-          python3 "$GITHUB_WORKSPACE/scripts/upload_to_gdrive.py" "$PACKAGE_NAME" "${{ env.DST_DRIVE_FOLDER }}"
-
-      - name: Individual Matrix Job Artifact Upload
-        if: steps.filter.outputs.skip != 'true'
+          python scripts/run_verified_pilot.py --baseline "$PWD/binaries/EncoderAppBaseline" --encoder "$PWD/binaries/EncoderAppTraced" --decoder "$PWD/binaries/DecoderAppTraced" --vtm "$PWD/vtm_src"
+      - name: Preserve diagnostics even if validation fails
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trace_${{ matrix.sequence.name }}_${{ matrix.config }}
-          path: output_run/*.tar.gz
-          retention-days: 14
-
-  package-all-ctc:
-    name: 📦 Consolidate All CTC Traces (Single Master Bundle)
-    needs: run-vtm
-    runs-on: ubuntu-22.04
-    if: always()
-    steps:
-      - name: Download all matrix artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: downloaded_all_matrix_artifacts
-
-      - name: Extract & Consolidate Master Bundle
-        run: |
-          mkdir -p master_ctc_traces
-          find downloaded_all_matrix_artifacts -name "*.tar.gz" -exec cp {} master_ctc_traces/ \;
-          cd master_ctc_traces
-          for f in *.tar.gz; do
-            echo "Unpacking $f..."
-            tar -xzvf "$f" || true
-          done
-          rm -f *.tar.gz
-          TOTAL_CSV=$(ls -1 trace_*.csv 2>/dev/null | wc -l)
-          echo "Consolidated total of $TOTAL_CSV trace CSV files."
-          tar -czvf ../ALL_VTM_CTC_TRACES_MASTER.tar.gz trace_*.csv enc_*.log
-
-      - name: Upload Master Unified CTC Archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: ALL_VTM_CTC_TRACES_MASTER
-          path: ALL_VTM_CTC_TRACES_MASTER.tar.gz
+          name: verified-vtm-pilot-${{ github.run_id }}
+          path: |
+            verified_results/
+            vtm_src/trace_patch_manifest.json
+          if-no-files-found: warn
           retention-days: 30
+      - name: Publish validation summary
+        if: success()
+        run: |
+          echo '## Genuine-video VTM pilot passed' >> "$GITHUB_STEP_SUMMARY"
+          echo 'BasketballPass: AI QP22/37 (2 frames each); LDP/LDB/RA QP32 (8 frames each).' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Bitstream neutrality, decoded reconstruction, complete frame counts and sampled dense-matrix transform checks passed. This is a pilot, not full CTC coverage.' >> "$GITHUB_STEP_SUMMARY"
